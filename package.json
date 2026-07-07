@@ -1,0 +1,14 @@
+{
+  "name": "test_1",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Supabase 接続確認",
+  "scripts": {
+    "check": "node check-connection.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "dotenv": "^16.4.5"
+  }
+}

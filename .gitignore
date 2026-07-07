@@ -1,0 +1,20 @@
+# 秘密情報（絶対にコミットしない）
+.env
+.env.local
+.env.*.local
+
+# 実データ・PII（コミット禁止。ダミー dammy_data/・sample/ は対象外）
+/*.csv
+/*.xlsx
+/*.pdf
+import_staging_*.csv
+
+# Claude Code 個人ローカル設定（権限など・コミットしない）
+.claude/settings.local.json
+
+# 依存物
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/

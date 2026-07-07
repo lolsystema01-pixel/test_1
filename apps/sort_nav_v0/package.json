@@ -1,0 +1,29 @@
+{
+  "name": "sort-nav-v0",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "仕分けナビ v0（T1 営業所オペレータ画面・スキャン→かご記号/配達順・当日一括取得・読取のみ）",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-auto": "^3.2.0",
+    "@sveltejs/kit": "^2.5.0",
+    "@sveltejs/vite-plugin-svelte": "^4.0.0",
+    "@types/node": "^20.19.43",
+    "svelte": "^5.0.0",
+    "svelte-check": "^4.0.0",
+    "typescript": "^5.5.0",
+    "vite": "^5.4.0"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.5.1",
+    "@supabase/supabase-js": "^2.45.0",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^2.5.2"
+  }
+}

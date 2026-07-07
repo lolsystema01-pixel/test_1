@@ -1,0 +1,12 @@
+{
+  "name": "LOL 仕分けナビ (v0)",
+  "short_name": "仕分けナビ",
+  "description": "T1 営業所オペレータ向け 仕分けナビ v0",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0b7a4b",
+  "lang": "ja",
+  "icons": []
+}

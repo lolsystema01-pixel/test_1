@@ -1,0 +1,12 @@
+{
+  "name": "LOL ドライバーアプリ (v0)",
+  "short_name": "ドライバー",
+  "description": "T3 ドライバーアプリ 認証フロント v0",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0b5cab",
+  "lang": "ja",
+  "icons": []
+}

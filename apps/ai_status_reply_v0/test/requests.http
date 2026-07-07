@@ -1,0 +1,31 @@
+### Claude API PoC（配送状況の自動応答）v0 — 動作確認用リクエスト集
+### VS Code REST Client 等で送るか、下の curl をそのまま使う。
+### 前提: `npm run dev` で起動済み（http://localhost:8787）。
+@base = http://localhost:8787
+
+### ヘルスチェック
+GET {{base}}/health
+
+### 1) 正常系：問合番号→状況・配達予定の自然文（質問なし）
+POST {{base}}/api/v1/ai/delivery-status-reply
+Content-Type: application/json
+
+{ "tracking_number": "900000000001" }
+
+### 2) 質問つき
+POST {{base}}/api/v1/ai/delivery-status-reply
+Content-Type: application/json
+
+{ "tracking_number": "900000000001", "question": "今日中に届きますか？" }
+
+### 3) 該当なし → 404 ＋統一エラー（code/message）
+POST {{base}}/api/v1/ai/delivery-status-reply
+Content-Type: application/json
+
+{ "tracking_number": "NOTEXIST999" }
+
+### 4) tracking_number 欠落 → 400 VALIDATION_ERROR
+POST {{base}}/api/v1/ai/delivery-status-reply
+Content-Type: application/json
+
+{ }

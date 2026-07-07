@@ -1,0 +1,25 @@
+{
+  "name": "ai-status-reply-v0",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Claude API PoC（配送状況の自動応答）v0 — Cloud Run(Hono+TS) 1エンドポイント。問合番号→Claudeが状況・配達予定を日本語で回答（PIIマスキング・APIキーは環境変数）",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test:prompt": "tsx test/prompt.test.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.0",
+    "@hono/node-server": "^1.13.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "dotenv": "^16.4.5",
+    "hono": "^4.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}
