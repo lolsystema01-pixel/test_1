@@ -37,8 +37,9 @@ export const POST: RequestHandler = async ({ request, url }) => {
     try {
       const { messages, canonical } = buildDriverReply(ev.text, baseUrl);
       await replyDriverLine(ev.replyToken, messages);
-      // ログは問合番号を末尾4桁マスク（PII/番号全桁をログに残さない既存方針）
-      logMasked('driver-line/reply', { tracking_number: canonical ?? '(対象外)' });
+      // ログは問合番号を末尾4桁マスク（PII/番号全桁をログに残さない既存方針）。対象外は非PIIキーで記録
+      if (canonical) logMasked('driver-line/reply', { tracking_number: canonical });
+      else logMasked('driver-line/reply', { result: 'out_of_scope' });
       allReplies.push(...messages);
     } catch (e) {
       logMasked('driver-line/error', { message: e instanceof Error ? e.message : String(e) });

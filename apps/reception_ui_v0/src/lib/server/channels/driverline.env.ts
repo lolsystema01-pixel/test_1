@@ -31,9 +31,14 @@ export async function replyDriverLine(
     logMasked('driver-line/reply(stub)', { count: messages.length });
     return;
   }
-  await fetch('https://api.line.me/v2/bot/message/reply', {
+  const res = await fetch('https://api.line.me/v2/bot/message/reply', {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
     body: JSON.stringify({ replyToken, messages: messages.slice(0, 5) })
   });
+  if (!res.ok) {
+    // 実機確認時の調査用：LINE返信APIの失敗をログに残す（トークン不正・URL不達等）。PIIなし。
+    const detail = (await res.text().catch(() => '')).slice(0, 200);
+    logMasked('driver-line/reply-failed', { status: res.status, detail });
+  }
 }
