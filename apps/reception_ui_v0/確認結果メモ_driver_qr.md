@@ -35,3 +35,10 @@
 - 公開URL: cloudflared quick tunnel（`cloudflared tunnel --url http://localhost:4173`）＋ `npm run preview`。**トンネルURLは再起動ごとに変わる＝Webhook URLと `PUBLIC_APP_BASE_URL` の再設定が必要**（常設は要デプロイ）。
 - ハマりどころ: Vite preview がトンネルのHost名を403で弾く → `vite.config.ts` に `preview.allowedHosts: ['.trycloudflare.com']` を追加して解決。
 - 友だち追加の配布リンク: `https://line.me/R/ti/p/@608abcuq`（配布はドライバー・関係者限定の運用）。
+
+### 常設化（Netlify検証本番・2026-07-08 追記）
+
+- 現場利用（翌日開始）に合わせ **Netlify に常設デプロイ**: `https://lol-driver-qr.netlify.app`（Webhook URL 差し替え→コンソール「検証」成功）。
+- **本番経由のend-to-endを実機確認**: 21:59 実番号送信→QR返信・関数ログで `driver-line/reply` と LINE側の画像取得（80ms）を突合。ローカル/トンネル停止後も 200 を確認（完全独立稼働）。
+- 環境変数は Netlify 側に設定（値はリポジトリ・チャットに出していない）。Supabase接続情報は未設定＝受付UI部分はスタブ動作（実データ到達不可）。
+- **暫定**: サイトは業務A個人のNetlifyアカウント所有。会社チームへの移管 or Cloud Run＋会社ドメインへの正式移行を別途指示書化（Slackに申し送り済み）。
