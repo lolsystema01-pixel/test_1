@@ -97,7 +97,7 @@
 </script>
 
 <section class="bar no-print">
-  <div><a href="/" class="back">← 仕分けナビ</a> <strong>一連の流れデモ</strong></div>
+  <div><a href="/sort" class="back">← 仕分けナビ</a> <strong>一連の流れデモ</strong></div>
   <div class="controls">
     <label>対象日 <input type="date" bind:value={date} /></label>
     <button class="go" onclick={previewDispatch} disabled={!!busy}>④ 配車 dry-run</button>

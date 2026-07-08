@@ -86,7 +86,7 @@
 
 <section class="bar no-print">
   <div>
-    <a href="/" class="back">← 仕分けナビ</a>
+    <a href="/sort" class="back">← 仕分けナビ</a>
     <strong>かご持出表PDF</strong>
   </div>
   <div class="controls">
