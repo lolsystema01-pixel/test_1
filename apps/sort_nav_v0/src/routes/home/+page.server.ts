@@ -38,7 +38,10 @@ export const load: PageServerLoad = async ({ locals: { supabase, safeGetSession 
     throw redirect(303, '/incomplete');
   }
 
-  const date = url.searchParams.get('date') ?? new Date().toISOString().slice(0, 10);
+  // 既定はローカル日付（toISOString=UTCだとJST早朝に前日へズレ、クイック選択が二重点灯する）
+  const now = new Date();
+  const localToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const date = url.searchParams.get('date') ?? localToday;
 
   const { data: card } = await supabase
     .from('office_home_summary')
@@ -47,9 +50,18 @@ export const load: PageServerLoad = async ({ locals: { supabase, safeGetSession 
     .eq('delivery_date', date)
     .maybeSingle();
 
+  // 稼働人数（対象日・承認済み・area RLSで自営業所ドライバーのみ）§12.0.3 セクション1
+  const { data: sched } = await supabase
+    .from('work_schedules')
+    .select('driver_id')
+    .eq('work_date', date)
+    .eq('application_status', '承認');
+  const headcount = sched ? new Set(sched.map((r) => r.driver_id)).size : 0;
+
   return {
     officeCode: profile.office_code as string,
     date,
-    card: (card as OfficeHomeCard | null) ?? null
+    card: (card as OfficeHomeCard | null) ?? null,
+    headcount
   };
 };

@@ -194,6 +194,7 @@
 
 <section class="bar">
   <div>
+    <a href="/home" class="back">← 営業所ホーム</a>
     <strong>営業所 {data.officeCode}</strong>
     <span class="muted">／ 当日 {totalItems}件</span>
   </div>
@@ -300,6 +301,7 @@
 
 <style>
   .bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
+  .back { color: #0b7a4b; text-decoration: none; margin-right: 0.6rem; }
   .bar-right { display: flex; align-items: center; gap: 0.75rem; }
   .card { background: #fff; border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); padding: 1rem 1.25rem; margin-bottom: 1rem; }
   .muted { color: #777; }
