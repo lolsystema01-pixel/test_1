@@ -22,7 +22,7 @@ const postSigned = (body, sig) => fetch(`${BASE}/webhook/driver-line`, {
 // preview起動（署名必須モード＋ベースURL固定）
 const server = spawn('npx', ['vite', 'preview', '--port', '4173', '--strictPort'], {
   cwd: new URL('..', import.meta.url).pathname,
-  env: { ...process.env, DRIVER_LINE_CHANNEL_SECRET: SECRET, PUBLIC_APP_BASE_URL: BASE },
+  env: { ...process.env, DRIVER_LINE_CHANNEL_SECRET: SECRET, PUBLIC_APP_BASE_URL: BASE, DRIVER_LINE_DEBUG_ECHO: 'true' },
   stdio: 'ignore'
 });
 try {

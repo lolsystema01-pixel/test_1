@@ -1,0 +1,15 @@
+# Netlify デプロイ設定（受付チャネルv0＋ドライバーQRボットの検証本番）
+# CLIデプロイで functions-internal が自動梱包されないため、関数ディレクトリと
+# キャッチオール・リダイレクトを明示指定（静的ファイルが先勝ち・それ以外はSSR関数へ）
+[build]
+  command = "npm run build"
+  publish = "build"
+
+[functions]
+  directory = ".netlify/functions-internal"
+  node_bundler = "esbuild"
+
+[[redirects]]
+  from = "/*"
+  to = "/.netlify/functions/sveltekit-render"
+  status = 200

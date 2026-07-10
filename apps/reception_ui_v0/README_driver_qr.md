@@ -44,3 +44,12 @@ npm run build && npm run smoke:driver-qr   # HTTPスモーク（署名込み・P
 ## 範囲外（指示書どおり）
 
 DB照会・存在チェック・ドライバー本人認証（後回し）／荷受人チャネルの変更／QRの印刷・ラベル化／Storage保存／本番運用設計。
+
+## 公開運用の安全装置（PR #3・マージ後レビュー対応）
+
+- **署名検証は fail-closed**：`DRIVER_LINE_CHANNEL_SECRET` 未設定のスタブ通過は dev のみ。公開環境では403（設定漏れの即時表面化）。荷受人側 `LINE_CHANNEL_SECRET` も同様。
+- **`PUBLIC_APP_BASE_URL` は公開環境で必須**：未設定の webhook は503。QRは印刷・配布される物理成果物のため、Hostヘッダ由来URLでは生成しない。
+- **公開ゲート**（`src/hooks.server.ts`）：本番ビルドの既定公開は `/qr/*` と `/webhook/driver-line` のみ。受付UI・荷受人/SMS/電話チャネルは `RECEPTION_UI_PUBLIC=true` を設定するまで404。
+- **webhookレスポンスに返信内容を同梱しない**（dev／`DRIVER_LINE_DEBUG_ECHO=true` のスモーク時のみ同梱）。
+- **SMS認証情報（`SMS_PROVIDER_*`）は公開環境に設定しない**（未設定＝スタブで実送信なし・意図しない課金防止）。
+- 既知の制約：`ratelimit.ts` はプロセス内メモリのため、サーバレス（Netlify Functions）ではインスタンス毎となり効きが弱まる。driver webhook は署名必須のため偽イベントでの悪用は不可。受付チャネルを本公開する際は外部ストア化（別対応）。

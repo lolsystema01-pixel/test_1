@@ -1,13 +1,18 @@
-// N-7 LINE：env依存ラッパ（署名検証スタブ・返信API）。endpointから利用（$env）。
+// N-7 LINE：env依存ラッパ（署名検証・返信API）。endpointから利用（$env）。
+import { dev } from '$app/environment';
 import { env } from '$env/dynamic/private';
 import { logMasked } from '../../mask';
 import { verifyLineSignature } from './line';
 
-// 署名検証（env版）。SECRET 未設定の検証環境では true（スタブ）＋警告ログ。
+// 署名検証（env版）。fail-closed：SECRET未設定は dev のみスタブ通過、公開環境では拒否（403）。
 export function verifySignatureEnv(rawBody: string, signature: string | null): boolean {
   const secret = env.LINE_CHANNEL_SECRET;
   if (!secret) {
-    logMasked('line/sig-skip（LINE_CHANNEL_SECRET未設定＝検証スタブ）');
+    if (!dev) {
+      logMasked('line/sig-fail-closed（LINE_CHANNEL_SECRET未設定・公開環境のため拒否）');
+      return false;
+    }
+    logMasked('line/sig-skip（dev・検証スタブ）');
     return true;
   }
   return verifyLineSignature(rawBody, signature, secret);
