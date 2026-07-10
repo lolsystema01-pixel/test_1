@@ -30,13 +30,32 @@
 ## (B) 実機ログイン検証
 
 ### B-1 area（IT01でログイン → 仕分けナビ各画面）
+
+**Storage API 経路の確認は一時ページ `/rlscheck` を使う**（ボタン1つで判定。読み取りのみ・書き込みなし）。
+DevTools は不要。アプリの Supabase クライアントは `window` に露出していないため、コンソールから
+`supabase.storage...` を直接叩くことはできない。
+
+手順:
+1. SQL Editor で**実在パス**を調べる（存在しないパスは権限が無くても同じ404になり検証にならない）
+   ```sql
+   select bucket_id, name from storage.objects
+   where bucket_id in ('carry-sheets','dispatch-sheets','godoor-csv')
+   order by bucket_id, name;
+   ```
+2. 自営業所(IT01)以外で始まるパスを1つ控える（例 `A01/2026-07-10/all.pdf`）
+3. area/IT01 でログイン → `/rlscheck` を開き、他営業所コード・バケット・実在パスを入力して「確認する」
+
 | 観点 | 期待 | 判定 |
 |---|---|---|
 | /home /sort /sheet /carry /godoor /label | 自営業所のデータだけ表示される | ☐ |
 | /sheet /carry /godoor の Storage保存 | 成功（自営業所パスに保存） | ☐ |
-| 他営業所パスの取得（DevTools console で `supabase.storage.from('carry-sheets').download('A01/<日付>/all.pdf')`） | **エラー/空**（Object not found 等） | ☐ |
-| 自営業所パスの download | 成功 | ☐ |
+| `/rlscheck` A: 自営業所プレフィックスの list（3バケット） | 1件以上（塞ぎすぎていない） | ☐ |
+| `/rlscheck` B: 他営業所プレフィックスの list（3バケット） | **0件** | ☐ |
+| `/rlscheck` C: 自営業所の実在パスを download | 成功 | ☐ |
+| **`/rlscheck` D: 他営業所の実在パスを download** | **失敗（Object not found 等）** ← 本命 | ☐ |
 | 同日の再保存（upsert上書き） | 成功（update ポリシー） | ☐ |
+
+> 確認が終わったら `apps/sort_nav_v0/src/routes/rlscheck/` は削除してよい（一時ページ）。
 
 ### B-2 driver（ドライバーアプリ）
 | 観点 | 期待 | 判定 |
