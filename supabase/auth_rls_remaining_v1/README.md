@@ -25,7 +25,7 @@
 ## 検証
 - `node supabase/auth_rls_remaining_v1/pglite_test_storage.mjs` … **26/26 PASS**（3バケット×hq/depot/area/driver：読取範囲外0件・書込拒否・prefix無し拒否・upsert上書き）
 - `node supabase/auth_rls_remaining_v1/pglite_test_audit.mjs` … **9/9 PASS**（参照3関数の検出・pg_dependでは0件の実証・旧語彙/隣接未知ID/municipality非一意の検出・読むだけ保証）
-- `node supabase/auth_rls_remaining_v1/pglite_test_verify_scope.mjs` … **8/8 PASS**（③の判定ロジック：なりすましあり=全行OK／なりすまし無し=先頭行NGで気づける）
+- `node supabase/auth_rls_remaining_v1/pglite_test_verify_scope.mjs` … **11/11 PASS**（③の判定ロジック：なりすましあり=全行OK／なりすまし無し=先頭行NGで気づける／GRANT無し(-1)・テーブル無し(-2)でクエリが落ちない）
 
 ## ③ 実行時の注意（最重要）
 `set local` は**同じトランザクション内でしか効かない**。ブロックの途中だけを選択して Run すると
@@ -36,6 +36,12 @@
 - 判定は結果の **先頭行「なりすまし確認」** で行う。`detail` に `area / IT01` 等が出れば効いている。
   `(null) / (null)` なら効いていない（UID未置換／部分実行）。結果ペイン右下の Role 表示は当てにしない。
 - `judge` 列が全行 OK なら合格。
+- `cnt_disp` の読み方:
+  - 数値 … RLS適用後に見えた行数
+  - `GRANT無し(アクセス不可)` … その表に SELECT の GRANT が無い（RLS以前に不可＝**0件より強い防御**。合格）
+  - `テーブル無し` … 表が存在しない（合格）
+  - ※ GRANT が無い表を素の `count(*)` で数えると権限エラーでクエリ全体が落ちるため、
+    `pg_temp.safe_count()` で捕捉している（`area_master_staging` が該当）。
 
 ## 前提・注意
 - Storageパスは既に `<office_code>/<日付>/…` で保存されている（carry/sheet/godoor 各画面）→ **フロント改修不要**。
