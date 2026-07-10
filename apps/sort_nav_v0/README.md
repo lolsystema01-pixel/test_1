@@ -12,12 +12,19 @@
 |---|---|
 | `src/hooks.server.ts` | Supabaseサーバークライアント(anon)＋セッション＋認証ガード（流用） |
 | `src/routes/login/` ・ `auth/callback` ・ `auth/signout` | Google OAuth（areaロール）ログイン／コールバック／ログアウト |
-| `src/routes/+page.server.ts` | **当日一括取得**：`index_today`＋`deliveries_today`。areaロール＋自営業所ガード |
-| `src/routes/+page.svelte` | 仕分けナビUI（スキャン・即時表示・かご一覧・保留/誤仕分け/重複・IndexedDB） |
+| `src/routes/+page.server.ts` | **ルート `/` → `/home` にリダイレクト**（307） |
+| `src/routes/home/` | **営業所ホーム**：予測対象日カード＋概況カード（Realtime）＋5セクション導線（DBは `supabase/office_home_v0/`） |
+| `src/routes/sort/+page.server.ts` | **当日一括取得**：`index_today`＋`deliveries_today`。areaロール＋自営業所ガード |
+| `src/routes/sort/+page.svelte` | 仕分けナビUI（スキャン・即時表示・かご一覧・保留/誤仕分け/重複・IndexedDB） |
+| `src/routes/sheet/` ・ `carry/` ・ `godoor/` ・ `label/` | 出力（配車表PDF／かご持出表PDF／GoDoor CSV／ラベル印刷） |
+| `src/routes/demo/` | 予測配車・採番（デモ。`?date=` でホームの予測対象日を引き継ぐ） |
 | `src/routes/incomplete/` | area未設定（権限なし）ページ |
 | `src/lib/idb.ts` | スキャン済のIndexedDB保持（再読込で復元） |
+| `src/lib/jstDate.ts` | 日付ヘルパ（**JST固定**。サーバ(UTC)/ブラウザのTZに依存しない） |
 | `supabase/deliveries_today_v0.sql` | 読み取り補助ビュー（status付き当日荷物・保留/対象外/担当者不明 判定用） |
 | `supabase/promote_test_area_v0.sql` | 検証用：テストGoogleユーザーを area(A01) に昇格 |
+
+> **ルート再編について**：`/`＝仕分けナビだったものを `/`→`/home`（営業所ホーム）へリダイレクトし、仕分けナビを `/sort` に移設しました（旧URLは307で救済）。営業所ホームが5セクションの起点になる構成のためで、**指示書の範囲外の変更**です（PRで合意）。各セクションからは「← 営業所ホーム」で戻れます。
 
 ## スコープと分類（RLS委譲）
 

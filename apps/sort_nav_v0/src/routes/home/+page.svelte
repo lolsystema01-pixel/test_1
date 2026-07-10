@@ -3,6 +3,9 @@
   //   ・読むだけ（集計）。処理本体（予測配車=#25／仕分け／出力）は各機能（下のリンク）。
   //   ・Realtime：deliveries / delivery_status_log の変更を購読 → 自動で再集計（§12.0.1）。
   //   ・手動「状態更新」ボタンも保持。対象日カード（前日/今日/翌日・既定today）に連動（§12.0.2）。
+  //   ・取得失敗は「データ無し(緑=完了)」と区別してエラー帯で表示（状態行は業務判断に使うため）。
+  import { todayJst, shiftDate } from '$lib/jstDate';
+
   type OfficeHomeCard = {
     office_code: string;
     delivery_date: string;
@@ -22,15 +25,9 @@
   let { data } = $props();
   let { supabase, officeCode } = $derived(data);
 
-  // ローカル日付で統一（UTC変換だと today/shift がTZで1日ズレて前日/今日/翌日が二重点灯する）
-  const ymd = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  const today = () => ymd(new Date());
-  const shift = (base: string, days: number) => {
-    const d = new Date(base + 'T00:00:00');
-    d.setDate(d.getDate() + days);
-    return ymd(d);
-  };
+  // 日付はJST固定（サーバのUTC/ブラウザのTZに依存させない → 既定日ズレ・クイック二重点灯を防ぐ）
+  const today = todayJst;
+  const shift = shiftDate;
 
   let date = $state<string>(data.date);
   let card = $state<OfficeHomeCard | null>(data.card);
@@ -40,6 +37,8 @@
   let refreshMsg = $state(''); // 状態更新の結果（✓更新／エラー）
   let headcount = $state<number | null>(data.headcount ?? null); // 対象日の稼働人数（承認済み）
   let phMsg = $state(''); // 未実装セクションの通知
+  // 取得失敗（ビュー未適用・障害・RLS事故）。null=正常。「データ無し(緑)」と区別する。
+  let cardError = $state<string | null>(data.loadError ?? null);
 
   // 対象日×自営業所の概況カードを取得（RLSで自営業所のみ）
   async function fetchCard(manual = false) {
@@ -55,14 +54,21 @@
         .eq('delivery_date', date)
         .maybeSingle();
       if (error) {
+        // 握りつぶさない：card を消し、エラーを保持（完了色の誤表示を防ぐ）
+        card = null;
+        cardError = error.message;
         if (manual) refreshMsg = `更新に失敗：${error.message}`;
         return;
       }
+      cardError = null;
       card = (row as OfficeHomeCard | null) ?? null;
       updatedAt = new Date().toLocaleTimeString('ja-JP');
       if (manual) refreshMsg = `✓ 更新しました（${updatedAt}）`;
     } catch (e) {
-      if (manual) refreshMsg = `更新に失敗：${e instanceof Error ? e.message : String(e)}`;
+      const m = e instanceof Error ? e.message : String(e);
+      card = null;
+      cardError = m;
+      if (manual) refreshMsg = `更新に失敗：${m}`;
     } finally {
       if (manual) refreshing = false;
     }
@@ -70,21 +76,29 @@
 
   // 稼働人数（対象日・承認済み・area RLSで自営業所ドライバーのみ）を読み取り（§12.0.3 セクション1）
   async function fetchHeadcount() {
-    const { data: rows } = await supabase
+    const { data: rows, error } = await supabase
       .from('work_schedules')
       .select('driver_id')
       .eq('work_date', date)
       .eq('application_status', '承認');
+    if (error) {
+      headcount = null; // 取得失敗は「0人」ではなく「—」
+      return;
+    }
     headcount = rows ? new Set(rows.map((r: { driver_id: string }) => r.driver_id)).size : 0;
   }
 
   const notImpl = (name: string) => (phMsg = `「${name}」は準備中（未実装）です。導線のみ配置しています。`);
 
-  // 受信0（データ無し）の既定表示
-  const received = $derived(card?.received ?? 0);
-  const stateLine = $derived(card?.state_line ?? '本日の受信はありません');
-  const stateColor = $derived(card?.state_color ?? '緑');
-  const needRepredict = $derived(card?.need_repredict ?? false);
+  // 取得失敗時は「—」＋エラー状態行。正常でデータ無しのときだけ「本日の受信はありません（緑）」。
+  const failed = $derived(cardError !== null);
+  const num = (v: number | undefined) => (failed ? '—' : (v ?? 0));
+  const received = $derived(failed ? '—' : (card?.received ?? 0));
+  const stateLine = $derived(
+    failed ? '概況を取得できませんでした（データ無しではありません）' : (card?.state_line ?? '本日の受信はありません')
+  );
+  const stateColor = $derived(failed ? 'エラー' : (card?.state_color ?? '緑'));
+  const needRepredict = $derived(!failed && (card?.need_repredict ?? false));
   const fmtDt = (s: string | null) =>
     s ? new Date(s).toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
 
@@ -135,8 +149,23 @@
 {#if refreshMsg}<p class="refreshmsg" class:err={refreshMsg.startsWith('更新に失敗')}>{refreshMsg}</p>{/if}
 {#if phMsg}<p class="refreshmsg ph-note">{phMsg} <button class="dismiss" onclick={() => (phMsg = '')}>×</button></p>{/if}
 
-<!-- 状態行（青=作業中／緑=完了） -->
-<section class="stateline" class:blue={stateColor === '青'} class:green={stateColor === '緑'}>
+<!-- 取得失敗のエラー帯（「データ無し(緑)」と明確に区別する） -->
+{#if cardError}
+  <section class="loaderr">
+    ⛔ 概況カードの取得に失敗しました：<code>{cardError}</code><br />
+    <span class="sub"
+      >ビュー <code>office_home_summary</code> が未適用（<code>supabase/office_home_v0/office_home_summary_v0.sql</code>）か、権限/通信の問題の可能性があります。表示中の数値は無効です。</span
+    >
+  </section>
+{/if}
+
+<!-- 状態行（青=作業中／緑=完了／赤=取得失敗） -->
+<section
+  class="stateline"
+  class:blue={stateColor === '青'}
+  class:green={stateColor === '緑'}
+  class:error={stateColor === 'エラー'}
+>
   <span class="dot"></span>
   <span class="txt">{stateLine}</span>
   <span class="meta">{date}{updatedAt ? ` ・更新 ${updatedAt}` : ''}</span>
@@ -158,16 +187,16 @@
   </div>
   <div class="card ok">
     <span class="k">配車済み（実ドライバー）</span>
-    <span class="v">{card?.real_drivers ?? 0}<small> 人</small> / {card?.real_items ?? 0}<small> 件</small></span>
+    <span class="v">{num(card?.real_drivers)}<small> 人</small> / {num(card?.real_items)}<small> 件</small></span>
   </div>
-  <div class="card" class:warn={(card?.virt_items ?? 0) > 0}>
+  <div class="card" class:warn={!failed && (card?.virt_items ?? 0) > 0}>
     <span class="k">仮配車（仮ドライバー）</span>
-    <span class="v">{card?.virt_drivers ?? 0}<small> 人</small> / {card?.virt_items ?? 0}<small> 件</small></span>
-    <span class="u">{(card?.virt_items ?? 0) > 0 ? '仮配車あり（0が理想）' : '0（理想）'}</span>
+    <span class="v">{num(card?.virt_drivers)}<small> 人</small> / {num(card?.virt_items)}<small> 件</small></span>
+    <span class="u">{failed ? '取得できません' : (card?.virt_items ?? 0) > 0 ? '仮配車あり（0が理想）' : '0（理想）'}</span>
   </div>
   <div class="card">
     <span class="k">最終配車実行</span>
-    <span class="v sm">{fmtDt(card?.last_dispatch_at ?? null)}</span>
+    <span class="v sm">{failed ? '—' : fmtDt(card?.last_dispatch_at ?? null)}</span>
     <span class="u">再予測判定の基準</span>
   </div>
 </section>
@@ -249,6 +278,10 @@
   .stateline { display: flex; align-items: center; gap: 0.6rem; border-radius: 8px; padding: 0.8rem 1rem; margin-bottom: 0.8rem; font-size: 1.05rem; font-weight: 700; }
   .stateline.blue { background: #eaf1fb; color: #0b3f7a; border: 1px solid #0b5cab; }
   .stateline.green { background: #eaf6ee; color: #0b5a36; border: 1px solid #0b7a4b; }
+  .stateline.error { background: #fdecef; color: #8a0018; border: 1px solid #b00020; }
+  .loaderr { background: #fdecef; border: 1px solid #b00020; color: #8a0018; border-radius: 8px; padding: 0.7rem 1rem; margin-bottom: 0.8rem; font-size: 0.9rem; }
+  .loaderr .sub { color: #a33; font-size: 0.8rem; }
+  .loaderr code { background: #fff; padding: 0 0.25rem; border-radius: 3px; }
   .stateline .dot { width: 12px; height: 12px; border-radius: 50%; background: currentColor; }
   .stateline .meta { margin-left: auto; font-size: 0.78rem; font-weight: 400; opacity: 0.75; }
 

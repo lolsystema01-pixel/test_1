@@ -3,9 +3,12 @@
 //  ・area ロール＋自営業所が前提（違えば /incomplete）。
 //  ・office_home_summary（RLSで自営業所のみ）を対象日で1枚取得。
 //  ・以降の更新（Realtime／手動）はブラウザ側 supabase で再取得（+page.svelte）。
-//  ・date は ?date= で受ける（既定=today）。
+//  ・date は ?date= で受ける（既定=JSTの今日。実行環境TZに依存させない）。
+//  ・取得失敗は loadError で返す。「データ無し(緑)」と「取得失敗」を画面で区別するため
+//    （状態行は業務判断に使うので、握りつぶして完了色を出さない）。
 // =============================================================
 import { redirect } from '@sveltejs/kit';
+import { todayJst } from '$lib/jstDate';
 import type { PageServerLoad } from './$types';
 
 export type OfficeHomeCard = {
@@ -38,12 +41,10 @@ export const load: PageServerLoad = async ({ locals: { supabase, safeGetSession 
     throw redirect(303, '/incomplete');
   }
 
-  // 既定はローカル日付（toISOString=UTCだとJST早朝に前日へズレ、クイック選択が二重点灯する）
-  const now = new Date();
-  const localToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const date = url.searchParams.get('date') ?? localToday;
+  // 既定は「JSTの今日」。実行環境(UTC/ローカル)に依存させない（クライアントの today() と一致）
+  const date = url.searchParams.get('date') ?? todayJst();
 
-  const { data: card } = await supabase
+  const { data: card, error: cardError } = await supabase
     .from('office_home_summary')
     .select('*')
     .eq('office_code', profile.office_code)
@@ -51,17 +52,20 @@ export const load: PageServerLoad = async ({ locals: { supabase, safeGetSession 
     .maybeSingle();
 
   // 稼働人数（対象日・承認済み・area RLSで自営業所ドライバーのみ）§12.0.3 セクション1
-  const { data: sched } = await supabase
+  const { data: sched, error: schedError } = await supabase
     .from('work_schedules')
     .select('driver_id')
     .eq('work_date', date)
     .eq('application_status', '承認');
-  const headcount = sched ? new Set(sched.map((r) => r.driver_id)).size : 0;
+  const headcount = schedError ? null : new Set((sched ?? []).map((r) => r.driver_id)).size;
 
   return {
     officeCode: profile.office_code as string,
     date,
-    card: (card as OfficeHomeCard | null) ?? null,
-    headcount
+    // 取得失敗時は card=null かつ loadError あり。画面側で「データ無し(緑)」と区別する。
+    card: cardError ? null : ((card as OfficeHomeCard | null) ?? null),
+    loadError: cardError?.message ?? null,
+    headcount,
+    headcountError: schedError?.message ?? null
   };
 };
