@@ -25,6 +25,17 @@
 ## 検証
 - `node supabase/auth_rls_remaining_v1/pglite_test_storage.mjs` … **26/26 PASS**（3バケット×hq/depot/area/driver：読取範囲外0件・書込拒否・prefix無し拒否・upsert上書き）
 - `node supabase/auth_rls_remaining_v1/pglite_test_audit.mjs` … **9/9 PASS**（参照3関数の検出・pg_dependでは0件の実証・旧語彙/隣接未知ID/municipality非一意の検出・読むだけ保証）
+- `node supabase/auth_rls_remaining_v1/pglite_test_verify_scope.mjs` … **8/8 PASS**（③の判定ロジック：なりすましあり=全行OK／なりすまし無し=先頭行NGで気づける）
+
+## ③ 実行時の注意（最重要）
+`set local` は**同じトランザクション内でしか効かない**。ブロックの途中だけを選択して Run すると
+`begin;`＋`set local` が実行されず、**postgres のまま（RLSバイパス）**で走り、範囲外が0にならない。
+
+- 各ブロックは **`begin;` から `rollback;` まで丸ごと** 実行する。
+- 各ブロックは **1本のSELECT** にしてある（Supabaseは最後のSELECTしか結果表示しないため）。
+- 判定は結果の **先頭行「なりすまし確認」** で行う。`detail` に `area / IT01` 等が出れば効いている。
+  `(null) / (null)` なら効いていない（UID未置換／部分実行）。結果ペイン右下の Role 表示は当てにしない。
+- `judge` 列が全行 OK なら合格。
 
 ## 前提・注意
 - Storageパスは既に `<office_code>/<日付>/…` で保存されている（carry/sheet/godoor 各画面）→ **フロント改修不要**。
