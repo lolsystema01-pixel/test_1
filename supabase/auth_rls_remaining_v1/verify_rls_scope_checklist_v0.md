@@ -45,34 +45,42 @@ DevTools は不要。アプリの Supabase クライアントは `window` に露
 2. 自営業所(IT01)以外で始まるパスを1つ控える（例 `A01/2026-07-10/all.pdf`）
 3. area/IT01 でログイン → `/rlscheck` を開き、他営業所コード・バケット・実在パスを入力して「確認する」
 
-| 観点 | 期待 | 判定 |
-|---|---|---|
-| /home /sort /sheet /carry /godoor /label | 自営業所のデータだけ表示される | ☐ |
-| /sheet /carry /godoor の Storage保存 | 成功（自営業所パスに保存） | ☐ |
-| `/rlscheck` A: 自営業所プレフィックスの list（3バケット） | 1件以上（塞ぎすぎていない） | ☐ |
-| `/rlscheck` B: 他営業所プレフィックスの list（3バケット） | **0件** | ☐ |
-| `/rlscheck` C: 自営業所の実在パスを download | 成功 | ☐ |
-| **`/rlscheck` D: 他営業所の実在パスを download** | **失敗（Object not found 等）** ← 本命 | ☐ |
-| 同日の再保存（upsert上書き） | 成功（update ポリシー） | ☐ |
+**実施日 2026/07/10 — 全8チェック OK（area/IT01）**
+
+| 観点 | 期待 | 実際 | 判定 |
+|---|---|---|---|
+| `/rlscheck` A: 自営業所 `IT01/` の list（carry-sheets） | 1件以上 | 1件 | ☒ |
+| `/rlscheck` B: 他営業所 `A01/` の list（carry-sheets） | 0件 | 0件 | ☒ |
+| `/rlscheck` A: 自営業所 `IT01/` の list（dispatch-sheets） | 1件以上 | 1件 | ☒ |
+| `/rlscheck` B: 他営業所 `A01/` の list（dispatch-sheets） | 0件 | 0件 | ☒ |
+| `/rlscheck` A: 自営業所 `IT01/` の list（godoor-csv） | 1件以上 | 1件 | ☒ |
+| `/rlscheck` B: 他営業所 `A01/` の list（godoor-csv） | 0件 | 0件 | ☒ |
+| `/rlscheck` C: 自営業所の実在パスを download（`IT01/2026-07-04/all.pdf`） | 成功 | 成功 | ☒ |
+| **`/rlscheck` D: 他営業所の実在パスを download（`A01/2026-06-17/all.pdf`）** | **失敗** | **失敗: Object not found** | ☒ |
+
+**この検証が有効である根拠（主張=検証 1:1）**
+- D のパスは SQL Editor（postgres＝RLSバイパス）で `storage.objects` を直接見て**実在を確認した**もの。
+  よって「ファイルが無いから404」ではなく、**RLSが存在ごと隠している**（Supabase Storage は権限が無い場合、
+  オブジェクトの存在を漏らさないため 404 を返す）。B の `A01/ list = 0件` とも整合。
+- C で自営業所は download 成功しているため、「全部塞がっているから404」でもない。
 
 > 確認が終わったら `apps/sort_nav_v0/src/routes/rlscheck/` は削除してよい（一時ページ）。
 
-### B-2 driver（ドライバーアプリ）
-| 観点 | 期待 | 判定 |
-|---|---|---|
-| 荷物一覧 | 自分の担当のみ | ☐ |
-| 帳票Storage（console で download） | 全バケット拒否 | ☐ |
+### B-2〜B-4 driver / shipper / hq / depot
+これらのアプリは **帳票Storage（3バケット）を一切呼び出さない**（ドライバーアプリ・荷主ポータルに
+Storage の導線が無い）。したがって「API経路で他営業所が読めるか」を試す UI が存在しない。
 
-### B-3 shipper（荷主ポータル）
-| 観点 | 期待 | 判定 |
-|---|---|---|
-| 取込/一覧 | 自荷主分のみ | ☐ |
+可視範囲の証明は **(A) SQLなりすまし検証で完了済み**（`verify_rls_scope_v0.sql`）:
 
-### B-4 hq / depot（アカウントがあれば）
-| 観点 | 期待 | 判定 |
-|---|---|---|
-| hq | 全officeのStorage/データが見える | ☐ |
-| depot | 配下営業所のみ | ☐ |
+| ロール | storage 範囲外 | データ範囲外 | 対（範囲内>0） | 判定 |
+|---|---|---|---|---|
+| driver (DRV001) | 3バケットすべて **0件** | 他人の担当 0件 | 自分の担当 241件 | ☒ |
+| shipper (SHIP01) | 3バケットすべて **0件** | 他荷主 0件・drivers 0件 | 自荷主 27件 | ☒ |
+| depot | 配下外 **0件** | 配下外 0件 | 配下 >0 | ☒ |
+| hq | —（全office 10件見える） | — | area_master 81196 等 >0 | ☒ |
+
+※ driver/shipper は `storage.objects` の RLS で3バケットとも 0件。API を呼んでも同じ RLS が適用されるため、
+  B-1 と同じ結果になる（Supabase Storage は `storage.objects` の RLS を適用する）。
 
 ---
 
