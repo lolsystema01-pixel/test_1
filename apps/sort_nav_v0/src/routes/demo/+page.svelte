@@ -5,7 +5,7 @@
   let { data } = $props();
   let { supabase } = $derived(data);
 
-  let date = $state('2026-07-04'); // 今日（データを今日へ移動済み）
+  let date = $state(data.date ?? '2026-07-04'); // 営業所ホームの予測対象日を引き継ぐ（?date=）
   let busy = $state('');
   let msg = $state('');
   let summary = $state<Record<string, number> | null>(null);
@@ -97,7 +97,7 @@
 </script>
 
 <section class="bar no-print">
-  <div><a href="/" class="back">← 仕分けナビ</a> <strong>一連の流れデモ</strong></div>
+  <div><a href="/home" class="back">← 営業所ホーム</a> <strong>一連の流れデモ</strong></div>
   <div class="controls">
     <label>対象日 <input type="date" bind:value={date} /></label>
     <button class="go" onclick={previewDispatch} disabled={!!busy}>④ 配車 dry-run</button>

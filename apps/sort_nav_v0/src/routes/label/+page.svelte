@@ -202,7 +202,7 @@
 
 <section class="bar no-print">
   <div>
-    <a href="/" class="back">← 仕分けナビ</a>
+    <a href="/home" class="back">← 営業所ホーム</a>
     <strong>ラベル印刷ブリッジ</strong>
   </div>
   <div class="controls">
