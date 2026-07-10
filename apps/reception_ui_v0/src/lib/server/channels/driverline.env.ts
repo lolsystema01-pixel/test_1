@@ -1,24 +1,34 @@
 // ドライバー用LINE：env依存ラッパ（署名検証スタブ・画像返信API・baseURL解決）。
 //   荷受人ボット（line.env.ts）とはチャネル・環境変数を完全分離（既存無改修）。
+import { dev } from '$app/environment';
 import { env } from '$env/dynamic/private';
 import { env as publicEnv } from '$env/dynamic/public';
 import { logMasked } from '../../mask';
 import { verifyLineSignature } from './line';
 import type { LineReplyMessage } from './driverline';
 
-// 署名検証（env版）。DRIVER_LINE_CHANNEL_SECRET 未設定の検証環境では true（スタブ）＋警告ログ。
+// 署名検証（env版）。fail-closed：SECRET未設定は dev のみスタブ通過、公開環境では拒否（403）。
+//   設定漏れのまま公開すると偽イベントが素通りするため、「なぜか動かない」で即表面化させる。
 export function verifyDriverSignatureEnv(rawBody: string, signature: string | null): boolean {
   const secret = env.DRIVER_LINE_CHANNEL_SECRET;
   if (!secret) {
-    logMasked('driver-line/sig-skip（DRIVER_LINE_CHANNEL_SECRET未設定＝検証スタブ）');
+    if (!dev) {
+      logMasked('driver-line/sig-fail-closed（DRIVER_LINE_CHANNEL_SECRET未設定・公開環境のため拒否）');
+      return false;
+    }
+    logMasked('driver-line/sig-skip（dev・検証スタブ）');
     return true;
   }
   return verifyLineSignature(rawBody, signature, secret);
 }
 
-// QR画像URLのベース。PUBLIC_APP_BASE_URL 優先、未設定はリクエストの origin。
+// QR画像URLのベース。公開環境では PUBLIC_APP_BASE_URL を必須にする
+//   （Hostヘッダ由来のoriginを使うと、細工されたHostで返信URLを外部ホストに向けられるため）。
 export function driverQrBaseUrl(requestOrigin: string): string {
-  return publicEnv.PUBLIC_APP_BASE_URL || requestOrigin;
+  const base = publicEnv.PUBLIC_APP_BASE_URL;
+  if (base) return base;
+  if (!dev) throw new Error('PUBLIC_APP_BASE_URL is required in production (QR画像URLのベース)');
+  return requestOrigin;
 }
 
 // 返信（検証はスタブ＝ログ。トークンがあれば Reply API。画像/テキスト混在可）。

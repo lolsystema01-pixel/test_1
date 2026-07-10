@@ -42,3 +42,13 @@
 - **本番経由のend-to-endを実機確認**: 21:59 実番号送信→QR返信・関数ログで `driver-line/reply` と LINE側の画像取得（80ms）を突合。ローカル/トンネル停止後も 200 を確認（完全独立稼働）。
 - 環境変数は Netlify 側に設定（値はリポジトリ・チャットに出していない）。Supabase接続情報は未設定＝受付UI部分はスタブ動作（実データ到達不可）。
 - **暫定**: サイトは業務A個人のNetlifyアカウント所有。会社チームへの移管 or Cloud Run＋会社ドメインへの正式移行を別途指示書化（Slackに申し送り済み）。
+
+### マージ後レビュー対応（2026-07-10・PR #3に反映）
+
+- 🔴1 署名検証 fail-closed 化（driverline.env.ts／line.env.ts。dev のみスタブ通過）
+- 🔴2 PUBLIC_APP_BASE_URL を公開環境で必須化（未設定は webhook 503・Host由来URLでQRを生成しない）
+- 🔴3 webhookレスポンスの返信内容同梱を dev／スモーク限定に
+- 🟠5 公開ゲート新設（hooks.server.ts）：既定公開は /qr/* と /webhook/driver-line のみ。受付UIは RECEPTION_UI_PUBLIC=true までは404
+- 🟠4 Netlify環境変数：DRIVER_LINE_*／PUBLIC_APP_BASE_URL 設定済み・LINE_CHANNEL_*（荷受人）と SMS_PROVIDER_* は**未設定を維持**（スタブ＝実送信なし）
+- ratelimit のサーバレス制約はREADMEに明記（受付チャネル本公開時に外部ストア化）
+- 🟡 adapter-auto を依存から削除。桁数の絞り込みは現場のA/4帯形式確認と同時に実施予定
