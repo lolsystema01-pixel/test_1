@@ -248,7 +248,7 @@
   <div class="sec">
     <h3>5. 管理者設定</h3>
     <div class="sec-actions">
-      <button class="ph" onclick={() => notImpl('システム設定')}>システム設定</button>
+      <a href="/admin/settings">管理者設定</a>
       <button class="ph" onclick={() => notImpl('データ再同期')}>データ再同期</button>
       <form method="POST" action="/auth/signout" class="signout"><button class="danger" type="submit">ログアウト</button></form>
     </div>
