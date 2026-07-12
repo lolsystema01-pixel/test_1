@@ -4,7 +4,8 @@
 //   ・サーバ側でも D章バリデーションを再実行（多層防御）。
 //   ・既存受付があり overwrite=false なら 409（二重受付警告）。
 import type { RequestHandler } from './$types';
-import { trackingFromToken, registerReception } from '$lib/server/store';
+import { trackingFromToken } from '$lib/server/store';
+import { submitReception } from '$lib/server/reception';
 import { validateAll, needsDateTime, needsDropPlace } from '$lib/validation';
 import { ok, fail, bearer, todayLocal } from '$lib/server/respond';
 import { logMasked } from '$lib/mask';
@@ -39,22 +40,27 @@ export const POST: RequestHandler = async ({ request }) => {
       return fail('VALIDATION_ERROR', '入力内容に誤りがあります。', 400);
     }
 
-    const r = registerReception(
+    // 注：memo はバリデーションのみ行い、登録には含めない（reception_requests に memo 列なし。
+    //   §4 の非PIIサマリ設計とも整合＝自由記述の永続化は範囲外・要確認）。
+    const r = await submitReception(
       tn,
       {
         type: body.type as string,
         desiredDate: needsDateTime(body.type) ? body.desiredDate : undefined,
         timeSlot: needsDateTime(body.type) ? body.timeSlot : undefined,
-        dropPlace: needsDropPlace(body.type) ? body.dropPlace : undefined,
-        memo: body.memo
+        dropPlace: needsDropPlace(body.type) ? body.dropPlace : undefined
       },
-      body.overwrite === true
+      { overwrite: body.overwrite === true, channel: 'web' }
     );
 
     if (!r.ok && r.duplicate) {
       logMasked('redelivery/duplicate', { trackingNumber: tn });
       // N-5：二重受付。クライアントは確認のうえ overwrite=true で再送できる。
       return fail('DUPLICATE_RECEPTION', `この問合番号はすでに受付済みです（受付番号 ${r.existing?.receiptNo}・${r.existing?.type}）。上書きしますか？`, 409);
+    }
+    if (!r.ok) {
+      logMasked('redelivery/failed', { trackingNumber: tn });
+      return fail('INTERNAL_ERROR', '受付に失敗しました。時間をおいて再度お試しください。', 500);
     }
 
     logMasked('redelivery/ok', { trackingNumber: tn, type: body.type });

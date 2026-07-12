@@ -41,8 +41,11 @@ export type FsmServices = {
   register: (
     tn: string,
     payload: { type: string; desiredDate?: string; timeSlot?: string; dropPlace?: string },
-    overwrite?: boolean
-  ) => { ok: boolean; duplicate?: boolean; receiptNo?: string; existing?: { receiptNo: string; type: string } };
+    overwrite?: boolean,
+    channel?: string
+  ) =>
+    | { ok: boolean; duplicate?: boolean; receiptNo?: string; existing?: { receiptNo: string; type: string } }
+    | Promise<{ ok: boolean; duplicate?: boolean; receiptNo?: string; existing?: { receiptNo: string; type: string } }>;
   sendOtp: (tn: string, code: string | undefined, channel: string) => void | Promise<void>;
   today: () => string;
 };
@@ -148,7 +151,7 @@ export async function advance(session: ChSession, raw: string, svc: FsmServices)
 }
 
 async function submit(session: ChSession, svc: FsmServices, overwrite: boolean): Promise<FsmResult> {
-  const res = svc.register(
+  const res = await svc.register(
     session.trackingNumber!,
     {
       type: session.receptionType!,
@@ -156,7 +159,8 @@ async function submit(session: ChSession, svc: FsmServices, overwrite: boolean):
       timeSlot: needsDateTime(session.receptionType) ? session.timeSlot : undefined,
       dropPlace: needsDropPlace(session.receptionType) ? session.dropPlace : undefined
     },
-    overwrite
+    overwrite,
+    session.channel
   );
   if (!res.ok && res.duplicate) {
     return r({ ...session, step: 'overwrite' }, [

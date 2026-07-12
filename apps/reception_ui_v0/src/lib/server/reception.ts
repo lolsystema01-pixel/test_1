@@ -39,6 +39,14 @@ type RpcPublicView = {
 };
 
 let _client: SupabaseClient | null | undefined;
+
+// テスト専用フック（store.__resetForTest と同型）：client() の解決結果を差し替える。
+//   ネットワークを介さず RPC 応答のマッピング（6-way switch／エラー時）を検証するための注入口。
+//   undefined を渡すと解除＝次回 client() 呼び出し時に通常解決（$env → フォールバック）へ戻る。
+export function __setClientForTest(c: unknown): void {
+  _client = c as SupabaseClient | null | undefined;
+}
+
 async function client(): Promise<SupabaseClient | null> {
   if (_client !== undefined) return _client;
 
@@ -113,16 +121,33 @@ export async function submitReception(
 
 // 受付状態の照会（N-6）。活性な受付が無ければ null
 // （live path: RPC側で status='受付済' のみ返す／fallback: 登録の有無）。
-export async function getReception(tn: string): Promise<{ receiptNo: string; type: string } | null> {
+// N-6表示（reception/done）は種別に加え希望日・時間帯・置き配場所も表示するため、
+// get_reception_public の非PII項目（desired_date/time_slot/drop_place）もあわせて返す
+// （caller_phone・memo等のPII/範囲外項目は源流でSELECTしない＝§4のマスキング設計どおり）。
+export async function getReception(tn: string): Promise<{
+  receiptNo: string;
+  type: string;
+  desiredDate?: string;
+  timeSlot?: string;
+  dropPlace?: string;
+} | null> {
   const c = await client();
   if (!c) {
     const r = storeExisting(tn);
-    return r ? { receiptNo: r.receiptNo, type: r.type } : null;
+    return r
+      ? { receiptNo: r.receiptNo, type: r.type, desiredDate: r.desiredDate, timeSlot: r.timeSlot, dropPlace: r.dropPlace }
+      : null;
   }
 
   const { data, error } = await c.rpc('get_reception_public', { p_tracking_number: tn });
   if (error || !data) return null;
   const j = data as RpcPublicView;
   if (!j.receipt_no || !j.type) return null;
-  return { receiptNo: j.receipt_no, type: j.type };
+  return {
+    receiptNo: j.receipt_no,
+    type: j.type,
+    desiredDate: j.desired_date,
+    timeSlot: j.time_slot,
+    dropPlace: j.drop_place
+  };
 }
