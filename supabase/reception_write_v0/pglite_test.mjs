@@ -80,8 +80,14 @@ await db.exec(`
 `);
 
 // ── 出荷SQLをそのまま適用 ──
-await db.exec(readFileSync(new URL('./reception_write_v0.sql', import.meta.url), 'utf8'));
-ok('reception_write_v0.sql が適用できる', true);
+let applied = false;
+try {
+  await db.exec(readFileSync(new URL('./reception_write_v0.sql', import.meta.url), 'utf8'));
+  applied = true;
+} catch (e) {
+  console.error('reception_write_v0.sql の適用に失敗:', e.message);
+}
+ok('reception_write_v0.sql が適用できる', applied);
 
 const reg = (args) => db.query(
   `select public.register_reception($1,$2,$3,$4,$5,$6,$7,$8) r`,
@@ -213,6 +219,44 @@ await asAnon(async () => {
 {
   const none = (await db.query(`select public.get_reception_public($1) p`, ['NOTREGISTERED'])).rows[0].p;
   ok('未登録の問合番号はNULL', none === null);
+}
+
+console.log('\n[12) unchanged判定はchannel/caller_phoneを含めない（受付内容3項目のみ）]');
+{
+  // 既存の活性受付: 900000000001 時間変更 2026-07-22 18-20 channel=web caller_phone=null
+  // 同じ内容だがchannelのみ異なる → unchanged・channelは元のまま・行数増えず
+  const rBefore = await reg(['900000000001', '時間変更', '2026-07-22', '18-20', null, 'web', null, true]);
+  const rowBefore = (await db.query(`select channel, caller_phone from public.reception_requests where receipt_no=$1`, [rBefore.receipt_no])).rows[0];
+  const r = await reg(['900000000001', '時間変更', '2026-07-22', '18-20', null, 'phone', '09012345678', true]);
+  ok('同一内容でchannel/caller_phoneのみ異なる → result=unchanged', r.result === 'unchanged');
+  ok('unchangedで行は増えない（totalは2行のまま）', (await countAll('900000000001')) === 2);
+  const rowAfter = (await db.query(`select channel, caller_phone from public.reception_requests where receipt_no=$1`, [r.receipt_no])).rows[0];
+  ok('保存済みのchannelは変わらない（元の値のまま）', rowAfter.channel === rowBefore.channel);
+  ok('保存済みのcaller_phoneも変わらない（元の値のまま）', rowAfter.caller_phone === rowBefore.caller_phone);
+}
+
+console.log('\n[13) DB層の不変条件：同一問合番号の活性受付は2行作れない]');
+{
+  // 新しい番号で1行作る
+  const r1 = await reg(['KAZ87654321098', '再配達', '2026-07-25', '午前', null, 'web', null, false]);
+  ok('KAZ87654321098を新規登録 → created', r1.result === 'created');
+  ok('活性受付は1行', (await countActive('KAZ87654321098')) === 1);
+
+  // postgres権限で素のINSERTを試みる → unique violationで失敗すること
+  let uniqueViolation = false;
+  try {
+    await db.exec(`
+      insert into public.reception_requests
+        (receipt_no, tracking_number, band_key, verified, reception_type, desired_date, time_slot, drop_place, channel, status)
+      values
+        ('R-999999-9999', 'KAZ87654321098', 'kaz', false, '再配達', '2026-07-26', '午前', null, 'web', '受付済')
+    `);
+  } catch (e) {
+    if (e.message.includes('unique') || e.message.includes('duplicate')) {
+      uniqueViolation = true;
+    }
+  }
+  ok('素のINSERTで同一番号の活性受付2本目を挿入 → unique violationで失敗', uniqueViolation);
 }
 
 console.log('\n[補足: write policyは置かない（規約どおり）]');
