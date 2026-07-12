@@ -18,7 +18,18 @@
 -- =============================================================
 
 
--- 0) 冪等クリーン（受付→荷物の順）--------------------------------
+-- 0) 冪等クリーン（子→親。delivery_index / delivery_status_log はcascade無しFKのため先に消す。
+--    存在しない環境（pglite等）ではスキップ）
+do $$
+begin
+  if to_regclass('public.delivery_status_log') is not null then
+    delete from public.delivery_status_log where tracking_number in ('900000099001', '900000099002', '900000099999');
+  end if;
+  if to_regclass('public.delivery_index') is not null then
+    delete from public.delivery_index where tracking_number in ('900000099001', '900000099002', '900000099999');
+  end if;
+end $$;
+
 delete from public.reception_requests
   where tracking_number in ('900000099001', '900000099002', '900000099999', 'KAZ900000099099');
 delete from public.deliveries

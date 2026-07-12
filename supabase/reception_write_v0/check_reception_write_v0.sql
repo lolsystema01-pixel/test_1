@@ -80,17 +80,34 @@ where tracking_number in ('900000099001', '900000099002', 'KAZ900000099099');
 --   900000099001 は①の時点で受付済（活性1行）。overwrite=falseで再登録を試みると
 --   二重受付(N-5)として弾かれ、既存の受付番号を返すだけで行は増えないこと。
 --   ★ 万一「created」になっても書込みが残らないよう begin〜rollback で包む。
+--   ⑤の流儀に合わせ、読み取り専用の事前SELECTはbeginの外・ブロック内はjudge列付き1本のSELECTに畳む。
 -- =============================================================
-begin;
 
+-- 事前確認（読み取り専用。beginの外）: 現在の活性受付番号 --------------------------------------------
 select receipt_no as existing_receipt_no_before
 from public.reception_requests
 where tracking_number = '900000099001' and status = '受付済';
 
-select public.register_reception(
-  '900000099001', '再配達', '2026-08-05', '午後', null, 'web', null, false
-) as r_duplicate;
--- 期待: result=duplicate / existing_receipt_no = 直前セレクトの受付番号と一致
+begin;
+
+with regcall as (
+  select public.register_reception(
+    '900000099001', '再配達', '2026-08-05', '午後', null, 'web', null, false
+  ) as r
+)
+select c.r ->> 'result'               as result,
+       c.r ->> 'existing_receipt_no'  as existing_receipt_no,
+       e.existing_receipt_no_before,
+       case when c.r ->> 'result' = 'duplicate'
+             and c.r ->> 'existing_receipt_no' = e.existing_receipt_no_before
+            then 'OK' else 'NG' end as judge
+from regcall c
+cross join (
+  select receipt_no as existing_receipt_no_before
+  from public.reception_requests
+  where tracking_number = '900000099001' and status = '受付済'
+) e;
+-- 期待: judge=OK（result=duplicate かつ existing_receipt_no が事前確認の受付番号と一致・行は増えない）
 
 rollback;
 
@@ -304,25 +321,38 @@ order by tablename;
 --   すなわち anon が deliveries への直接SELECT権限を持たなくても、関数内の実在チェックは
 --   定義者権限で走るため成功する仕様を実機で確認する。
 --   ★ begin〜rollback を丸ごと実行（rollbackするので検証行・受付とも残らない＝再実行可）。
+--   ⑤の流儀に合わせ、読み取り専用の事前SELECTはbeginの外・ブロック内はjudge列付き1本のSELECTに畳む。
 -- =============================================================
-begin;
 
--- 実在チェック対象（seedが用意した 900000099999。受付は未登録の状態のまま渡す）
+-- 実在チェック対象（読み取り専用。beginの外）: seedが用意した900000099999。受付は未登録の状態のまま ----
 select tracking_number, office_code, status from public.deliveries
 where tracking_number = '900000099999';
 -- 期待: 1行（seed_reception_write_v0.sql が用意済み。0行ならseed未実行）
 
+begin;
+
 set local request.jwt.claims = '{"role":"anon"}';
 set local role anon;
 
--- anonはdeliveriesへのSELECT grantを持たない（number_bands/reception_requestsも同様）ことの確認
-select has_table_privilege('anon', 'public.deliveries', 'select') as anon_deliveries_select;
--- 期待: false（それでも下のregister_receptionは実在チェックに成功する＝DEFINERの効果）
-
-select public.register_reception(
-  '900000099999', '置き配', null, null, '宅配ボックス', 'web', null, false
-) as r_anon_created;
--- 期待: result=created / verified=true / band_key=demo9000
+with regcall as (
+  select public.register_reception(
+    '900000099999', '置き配', null, null, '宅配ボックス', 'web', null, false
+  ) as r
+),
+priv as (
+  select has_table_privilege('anon', 'public.deliveries', 'select') as anon_deliveries_select
+)
+select p.anon_deliveries_select,
+       c.r ->> 'result'   as result,
+       c.r ->> 'verified' as verified,
+       c.r ->> 'band_key' as band_key,
+       case when p.anon_deliveries_select = false
+             and c.r ->> 'result' = 'created'
+             and (c.r ->> 'verified')::boolean = true
+             and c.r ->> 'band_key' = 'demo9000'
+            then 'OK' else 'NG' end as judge
+from regcall c, priv p;
+-- 期待: judge=OK（anon_deliveries_select=false でも result=created/verified=true/band_key=demo9000）
 --   （anonにdeliveriesのSELECT権限が無くても、DEFINER内部の実在チェックはRLSを介さず成功する）
 
 rollback;
