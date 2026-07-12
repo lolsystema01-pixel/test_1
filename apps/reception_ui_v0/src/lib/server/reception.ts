@@ -41,17 +41,24 @@ type RpcPublicView = {
 let _client: SupabaseClient | null | undefined;
 async function client(): Promise<SupabaseClient | null> {
   if (_client !== undefined) return _client;
+
+  let env;
   try {
     // $env/dynamic/public は SvelteKit/Vite の仮想モジュール。
     // プレーンなテストランナー（node --test。Viteを介さない）ではモジュール解決自体が失敗するため、
-    // 遅延import＋try/catchでラップし、その場合はフォールバック（未設定と同じ扱い）にする。
-    const { env } = await import('$env/dynamic/public');
-    const url = env.PUBLIC_SUPABASE_URL;
-    const key = env.PUBLIC_SUPABASE_ANON_KEY;
-    _client = url && key ? createClient(url, key, { auth: { persistSession: false } }) : null;
+    // importのみをtry/catchでラップ。import失敗時はフォールバック（未設定と同じ扱い）にする。
+    const m = await import('$env/dynamic/public');
+    env = m.env;
   } catch {
     _client = null;
+    return _client;
   }
+
+  const url = env.PUBLIC_SUPABASE_URL;
+  const key = env.PUBLIC_SUPABASE_ANON_KEY;
+  // env vars が未設定ならフォールバック。設定済みで createClient がエラーなら、
+  // 例外をpropagateして caller に知らせる（silent fallback で書き込み先がDB/インメモリに割れるのを防ぐ）。
+  _client = url && key ? createClient(url, key, { auth: { persistSession: false } }) : null;
   return _client;
 }
 
@@ -104,7 +111,8 @@ export async function submitReception(
   }
 }
 
-// 受付状態の照会（N-6）。活性受付（'受付済'）が無ければ null。
+// 受付状態の照会（N-6）。活性な受付が無ければ null
+// （live path: RPC側で status='受付済' のみ返す／fallback: 登録の有無）。
 export async function getReception(tn: string): Promise<{ receiptNo: string; type: string } | null> {
   const c = await client();
   if (!c) {
