@@ -137,17 +137,20 @@ group by tracking_number;
 
 
 -- =============================================================
--- ④ 帯設定の一覧表示（解禁状態が見える。行変更だけで帯追加・照会解禁が完結する設計の確認）
+-- ④ 帯設定の一覧表示（解禁状態が見える。行変更だけで帯追加・受付時実在チェックの解禁が完結する設計の確認）
+--   ★ lookup_enabled は本モジュールでは未参照（初期値の投入のみ）。現状 get_reception_public は
+--     この列を一切SELECTしておらず、帯を問わず全ての活性受付の非PIIサマリを返す（kaz/a/four帯も含む）。
+--     参照する実装は指示書❸（AI状況照会エンジン）の実装時。このままで良いかはLOL確認事項（README参照）。
 -- =============================================================
 select band_key, prefix, digits, lookup_enabled, verify_on_reception, enabled, label
 from public.number_bands
 order by band_key;
--- 期待: demo9000/req/dsp … lookup_enabled=true・verify_on_reception=true（enabled=true）
---       kaz/a/four        … 仮値のため lookup_enabled=false・verify_on_reception=false
+-- 期待: demo9000/req/dsp … verify_on_reception=true（enabled=true）／lookup_enabled=true（値の確認のみ・未参照）
+--       kaz/a/four        … 仮値のため verify_on_reception=false／lookup_enabled=false（値の確認のみ・未参照）
 
 
 -- =============================================================
--- ⑤ なりすましRLS（area/driver/shipperの範囲内>0・範囲外0件）
+-- ⑤ なりすましRLS（area/driver/shipper/hqの範囲内>0・範囲外0件／hqは未照合行も見える）
 --   verify_rls_scope_v0.sql §1 と同型: begin〜rollback丸ごと実行・先頭行がなりすまし確認・
 --   1ブロック1SELECT・safe_count（GRANT無し/表無しを -1/-2 として捕捉）。
 -- =============================================================
@@ -158,6 +161,7 @@ from public.profiles p
 where (p.role = 'area'    and p.office_code = 'A01')
    or (p.role = 'driver'  and p.driver_id   = 'DRV001')
    or (p.role = 'shipper' and p.shipper_id in ('SHIP01', 'SHIP02'))
+   or (p.role = 'hq')
 order by p.role, p.shipper_id nulls last;
 -- ★ 以降の各ブロックの '<○○_UID>' を、上の user_id に置換してから実行する。
 --   SHIP02 のprofilesが無い場合は apps/shipper_portal_v0/supabase/promote_test_shipper_v0.sql 等で
@@ -299,6 +303,39 @@ from (values
 order by seq;
 
 rollback;
+
+
+-- §5. hq — 全件可視（未照合行 KAZ900000099099 もhqなら見える＝README設計判断①の実証） -----------
+--   ★ 追加要件の対（レビュー指摘M2）: depot/area/driver/shipperは全員KAZ未照合=0件（範囲外0件）だった側の、
+--     hq側「範囲内=1件（見える）」をここで閉じる。
+--   ★ '<HQ_UID>' を置換 → begin〜rollback を丸ごと実行
+begin;
+create function pg_temp.safe_count(q text) returns bigint language plpgsql as $fn$
+declare n bigint;
+begin
+  execute 'select count(*) from (' || q || ') _x' into n; return n;
+exception when insufficient_privilege then return -1; when undefined_table then return -2;
+end $fn$;
+
+set local request.jwt.claims = '{"role":"authenticated","sub":"<HQ_UID>"}';
+set local role authenticated;
+
+select seq, check_name,
+       case cnt when -1 then 'GRANT無し(アクセス不可)' when -2 then 'テーブル無し' else cnt::text end as cnt_disp,
+       expect,
+       case when (expect = '=0' and cnt <= 0) or (expect = '>0' and cnt > 0) or (expect = '=1' and cnt = 1) then 'OK' else 'NG' end as judge,
+       detail
+from (values
+  (0, 'なりすまし確認（role=hq）',
+      (case when public.my_role() = 'hq' then 1 else 0 end)::bigint, '>0',
+      coalesce(public.my_role(), '(null)')),
+  (1, 'hqはKAZ未照合行(KAZ900000099099)も見える（他ロールは0件だった＝設計判断①の対）',
+      pg_temp.safe_count($q$select 1 from public.reception_requests where tracking_number = 'KAZ900000099099'$q$), '=1', null)
+) as t(seq, check_name, cnt, expect, detail)
+order by seq;
+
+rollback;
+-- 合格: 全行 judge=OK（seq=1がcnt=1＝hqはKAZ帯の未照合行も見える。§1〜§4のarea/driver/shipperは同じ番号で=0件）
 
 
 -- =============================================================

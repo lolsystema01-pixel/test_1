@@ -484,6 +484,61 @@ console.log('\n[19) 二重受付（seed済み番号）: 900000099001に同一内
   ok('900000099001（seed済み・同一内容）→ result=duplicate', r.result === 'duplicate');
 }
 
+console.log('\n[20) I2: 入力上限バリデーション（超過→format_error・境界値ちょうどはcreated＝off-by-oneでない確認）]');
+{
+  const longTn = 'KAZ' + '9'.repeat(40); // 43文字 > 32
+  const r1 = await reg([longTn, '置き配', null, null, '玄関前', 'web', null, false]);
+  ok('tracking_number 32文字超 → result=format_error', r1.result === 'format_error');
+
+  const r2 = await reg(['KAZ10000000001', '置き配', null, null, 'x'.repeat(101), 'web', null, false]);
+  ok('drop_place 101文字 → result=format_error', r2.result === 'format_error');
+
+  const farDate = new Date(Date.now() + 200 * 86400000).toISOString().slice(0, 10);
+  const r3 = await reg(['KAZ10000000002', '再配達', farDate, '午前', null, 'web', null, false]);
+  ok('desired_date が現在+200日 → result=format_error', r3.result === 'format_error');
+
+  const r4 = await reg(['KAZ10000000003', '置き配', null, null, 'x'.repeat(100), 'web', null, false]);
+  ok('drop_place ちょうど100文字 → result=created（100文字は上限内。off-by-oneでないことの確認）', r4.result === 'created');
+}
+
+console.log('\n[21) C1修正: 採番のlpad切り詰め回避（seq 10000超えでもreceipt_noが衝突しない）]');
+{
+  // このassertはpublic.reception_receipt_seqを10000超えまで進める（順方向のみ・巻き戻さない）。
+  // receipt_noは常にこのassert以前より大きい番号になるため、以前のtestで作った行と衝突しない。
+  // 以降に採番へ依存するtestは無い（テストスイート末尾に配置＝順序安全）。
+  await db.exec(`
+    insert into public.deliveries (tracking_number, office_code, status) values
+      ('900000010001', 'A01', '未配車'),
+      ('900000010002', 'A01', '未配車');
+  `);
+  await db.exec(`select setval('public.reception_receipt_seq', 10000, false)`);
+
+  const r1 = await reg(['900000010001', '再配達', '2026-08-10', '午前', null, 'web', null, false]);
+  const r2 = await reg(['900000010002', '再配達', '2026-08-10', '午前', null, 'web', null, false]);
+
+  ok('seq=10000到達後の1件目 → result=created', r1.result === 'created');
+  ok('seq=10000到達後の2件目 → result=created', r2.result === 'created');
+  ok('1件目のreceipt_noは...-10000（lpadで4桁に切り詰められていない）', /^R-\d{6}-10000$/.test(r1.receipt_no));
+  ok('2件目のreceipt_noは...-10001（連番として区別できる）', /^R-\d{6}-10001$/.test(r2.receipt_no));
+  ok('両者のreceipt_noは重複しない（distinct・PK違反にならない）', r1.receipt_no !== r2.receipt_no);
+}
+
+console.log('\n[22) M3: authenticated役でのreception_requestsへの直接INSERTは拒否される（write policy 0本＋INSERT GRANT無し）]');
+await asUser(A01, async () => {
+  let denied = false;
+  try {
+    await db.exec(`
+      insert into public.reception_requests
+        (receipt_no, tracking_number, band_key, verified, reception_type, desired_date, time_slot, drop_place, channel, status)
+      values
+        ('R-999999-9997', 'RLSDENYTEST0001', 'kaz', false, '再配達', '2026-07-26', '午前', null, 'web', '受付済')
+    `);
+  } catch (e) {
+    denied = /permission denied|row-level security|insufficient_privilege/i.test(e.message);
+  }
+  ok('authenticated役の直接INSERTは拒否される（記録口関数経由のみ＝default-denyの直接証明）', denied);
+});
+
 console.log(`\nreception_write pglite: ${pass} passed, ${fail} failed`);
 await db.close();
 if (fail > 0) process.exit(1);

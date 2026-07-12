@@ -82,6 +82,36 @@ create sequence if not exists public.reception_receipt_seq;
 
 
 -- =============================================================
+-- §2b. 入力上限のバックストップ（CHECK制約・冪等に追加）
+--   register_reception 内のI2バリデーションと同じ上限をテーブル側にも課す（anon実行の書き込み口の
+--   ため、関数を経由しない直接INSERTが万一あっても崩れないようにする二段構え）。
+--   desired_dateの窓（JST±）は運用で調整したい業務ルールのため、あえてCHECKにはしない（関数側のみ）。
+-- =============================================================
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'reception_requests_tn_len_chk') then
+    alter table public.reception_requests add constraint reception_requests_tn_len_chk
+      check (char_length(tracking_number) <= 32);
+  end if;
+
+  if not exists (select 1 from pg_constraint where conname = 'reception_requests_ts_len_chk') then
+    alter table public.reception_requests add constraint reception_requests_ts_len_chk
+      check (time_slot is null or char_length(time_slot) <= 32);
+  end if;
+
+  if not exists (select 1 from pg_constraint where conname = 'reception_requests_dp_len_chk') then
+    alter table public.reception_requests add constraint reception_requests_dp_len_chk
+      check (drop_place is null or char_length(drop_place) <= 100);
+  end if;
+
+  if not exists (select 1 from pg_constraint where conname = 'reception_requests_cp_len_chk') then
+    alter table public.reception_requests add constraint reception_requests_cp_len_chk
+      check (caller_phone is null or char_length(caller_phone) <= 32);
+  end if;
+end $$;
+
+
+-- =============================================================
 -- §3. register_reception（SECURITY DEFINER・帯判定→検証→二重制御→採番）
 --   受付番号: 'R-' || YYMMDD(JST) || '-' || 4桁連番（既存 'R-' 形式踏襲・乱数排除で決定化）
 --   D章相当: 再配達/時間変更→desired_date・time_slot必須。置き配→drop_place必須。
@@ -108,6 +138,7 @@ declare
   v_verified   boolean;
   v_same       boolean;
   v_receipt_no text;
+  v_seq        bigint;
 begin
   -- ── D章相当のバリデーション（帯判定より先に行い、番号の形式に関わらず一貫して弾く）──
   if p_type not in ('再配達','置き配','時間変更') then
@@ -121,6 +152,26 @@ begin
   end if;
   if p_type = '置き配' and (p_drop_place is null or btrim(p_drop_place) = '') then
     raise exception '置き配には置き配場所の指定が必須です' using errcode = '23514';
+  end if;
+
+  -- ── I2: 入力上限チェック（anon実行の書き込み口のため、書込み前にDB側で一律に弾く）──
+  --   既存のformat_errorと同じjsonb形状で返す。desired_dateの窓はJST基準（既存のJST運用に合わせる）。
+  if char_length(p_tracking_number) > 32
+     or char_length(coalesce(p_time_slot, '')) > 32
+     or char_length(coalesce(p_drop_place, '')) > 100
+     or char_length(coalesce(p_caller_phone, '')) > 32
+     or (
+       p_desired_date is not null
+       and (
+         p_desired_date < (now() at time zone 'Asia/Tokyo')::date - 1
+         or p_desired_date > (now() at time zone 'Asia/Tokyo')::date + 90
+       )
+     )
+  then
+    return jsonb_build_object(
+      'result', 'format_error', 'receipt_no', null, 'band_key', null,
+      'verified', null, 'existing_receipt_no', null, 'existing_type', null
+    );
   end if;
 
   -- ── 帯判定（最長prefix優先）──
@@ -179,13 +230,31 @@ begin
     -- 上書き: 旧行を'取消'にして新行を追加（履歴保全）
     update public.reception_requests set status = '取消' where receipt_no = v_existing.receipt_no;
 
+    -- C1: lpad(...,4,'0') はPostgresでは4桁を超えると「切り詰め」になる（lpad('10000',4,'0')='1000'）ため、
+    --   採番が9999を超えるとreceipt_noが衝突しPK違反になっていた。桁が4を超えたらそのまま出す形に修正。
+    v_seq := nextval('public.reception_receipt_seq');
     v_receipt_no := 'R-' || to_char(now() at time zone 'Asia/Tokyo', 'YYMMDD') || '-'
-      || lpad(nextval('public.reception_receipt_seq')::text, 4, '0');
+      || lpad(v_seq::text, greatest(4, char_length(v_seq::text)), '0');
 
-    insert into public.reception_requests
-      (receipt_no, tracking_number, band_key, verified, reception_type, desired_date, time_slot, drop_place, channel, caller_phone, status, created_by)
-    values
-      (v_receipt_no, p_tracking_number, v_band.band_key, v_verified, p_type, p_desired_date, p_time_slot, p_drop_place, p_channel, p_caller_phone, '受付済', auth.uid());
+    begin
+      insert into public.reception_requests
+        (receipt_no, tracking_number, band_key, verified, reception_type, desired_date, time_slot, drop_place, channel, caller_phone, status, created_by)
+      values
+        (v_receipt_no, p_tracking_number, v_band.band_key, v_verified, p_type, p_desired_date, p_time_slot, p_drop_place, p_channel, p_caller_phone, '受付済', auth.uid());
+    exception
+      when unique_violation then
+        -- M1: 同時実行で他トランザクションが先に活性受付(reception_requests_active_tn_uidx)を
+        --   作っていた場合、エラーにせずduplicateとして返す（同時実行はpgliteで再現不可・
+        --   部分UNIQUEインデックスが最終防衛）。
+        select * into v_existing from public.reception_requests
+        where tracking_number = p_tracking_number and status = '受付済'
+        order by created_at desc
+        limit 1;
+        return jsonb_build_object(
+          'result', 'duplicate', 'receipt_no', null, 'band_key', v_band.band_key,
+          'verified', null, 'existing_receipt_no', v_existing.receipt_no, 'existing_type', v_existing.reception_type
+        );
+    end;
 
     return jsonb_build_object(
       'result', 'overwritten', 'receipt_no', v_receipt_no, 'band_key', v_band.band_key,
@@ -193,14 +262,28 @@ begin
     );
   end if;
 
-  -- 活性受付なし → 新規登録
+  -- 活性受付なし → 新規登録（C1修正は上と同じ式を使用）
+  v_seq := nextval('public.reception_receipt_seq');
   v_receipt_no := 'R-' || to_char(now() at time zone 'Asia/Tokyo', 'YYMMDD') || '-'
-    || lpad(nextval('public.reception_receipt_seq')::text, 4, '0');
+    || lpad(v_seq::text, greatest(4, char_length(v_seq::text)), '0');
 
-  insert into public.reception_requests
-    (receipt_no, tracking_number, band_key, verified, reception_type, desired_date, time_slot, drop_place, channel, caller_phone, status, created_by)
-  values
-    (v_receipt_no, p_tracking_number, v_band.band_key, v_verified, p_type, p_desired_date, p_time_slot, p_drop_place, p_channel, p_caller_phone, '受付済', auth.uid());
+  begin
+    insert into public.reception_requests
+      (receipt_no, tracking_number, band_key, verified, reception_type, desired_date, time_slot, drop_place, channel, caller_phone, status, created_by)
+    values
+      (v_receipt_no, p_tracking_number, v_band.band_key, v_verified, p_type, p_desired_date, p_time_slot, p_drop_place, p_channel, p_caller_phone, '受付済', auth.uid());
+  exception
+    when unique_violation then
+      -- M1: 上と同じ理由（新規登録側でも同時実行の競合をduplicateとして返す）。
+      select * into v_existing from public.reception_requests
+      where tracking_number = p_tracking_number and status = '受付済'
+      order by created_at desc
+      limit 1;
+      return jsonb_build_object(
+        'result', 'duplicate', 'receipt_no', null, 'band_key', v_band.band_key,
+        'verified', null, 'existing_receipt_no', v_existing.receipt_no, 'existing_type', v_existing.reception_type
+      );
+  end;
 
   return jsonb_build_object(
     'result', 'created', 'receipt_no', v_receipt_no, 'band_key', v_band.band_key,
