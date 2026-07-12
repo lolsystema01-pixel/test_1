@@ -18,10 +18,6 @@ export type SubmitResult = {
   existing?: { receiptNo: string; type: string };
 };
 
-type Payload = { type: string; desiredDate?: string; timeSlot?: string; dropPlace?: string };
-type Channel = 'web' | 'line' | 'sms' | 'phone' | 'ai_phone';
-type SubmitOpts = { overwrite?: boolean; channel?: Channel; callerPhone?: string };
-
 // register_reception の jsonb 戻り値（reception_write_v0.sql §3 準拠）
 type RpcResult = {
   result: 'created' | 'duplicate' | 'overwritten' | 'unchanged' | 'format_error' | 'not_found';
@@ -62,8 +58,8 @@ async function client(): Promise<SupabaseClient | null> {
 // 受付登録（N-4）。二重受付（N-5）は overwrite 指定がない限り duplicate を返す。
 export async function submitReception(
   tn: string,
-  payload: Payload,
-  opts?: SubmitOpts
+  payload: { type: string; desiredDate?: string; timeSlot?: string; dropPlace?: string },
+  opts?: { overwrite?: boolean; channel?: 'web' | 'line' | 'sms' | 'phone' | 'ai_phone'; callerPhone?: string }
 ): Promise<SubmitResult> {
   const c = await client();
   if (!c) {
