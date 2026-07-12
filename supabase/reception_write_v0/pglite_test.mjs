@@ -14,7 +14,13 @@ async function throws(n, fn) {
 
 const HQ  = '00000000-0000-0000-0000-0000000000a1'; // hq
 const A01 = '00000000-0000-0000-0000-0000000000a2'; // area A01
-const DRV = '00000000-0000-0000-0000-0000000000a3'; // driver
+const DRV = '00000000-0000-0000-0000-0000000000a3'; // driver DRV001 (A01)
+// Task 2（RLS検証）で追加した4ロール分のユーザー（伊丹デモ側 + 荷主2社）
+const DEPOT_ITM = '00000000-0000-0000-0000-0000000000a4'; // depot D_ITM
+const AREA_IT   = '00000000-0000-0000-0000-0000000000a5'; // area IT01
+const DRV_IT    = '00000000-0000-0000-0000-0000000000a6'; // driver ITD001 (IT01)
+const SHIP1     = '00000000-0000-0000-0000-0000000000a7'; // shipper SHIP01
+const SHIP2     = '00000000-0000-0000-0000-0000000000a8'; // shipper SHIP02
 
 // 呼び出しユーザーとして実行（auth.uid() は request.jwt.claims->>'sub'）。呼び出し内で結果を確定させ、最後にrollback。
 async function asUser(uid, fn) {
@@ -73,6 +79,15 @@ await db.exec(`
     ('${HQ}','hq',null,null,null),
     ('${A01}','area','A01',null,null),
     ('${DRV}','driver',null,'DRV001',null);
+
+  -- Task 2（RLS検証）: 不足ロールのプロフィール（depot/area IT01/driver ITD001/shipper×2）と営業所階層
+  insert into public.offices (office_code, depot_code) values ('A01','D01'),('IT01','D_ITM');
+  insert into public.profiles (user_id, role, depot_code, office_code, driver_id, shipper_id) values
+    ('${DEPOT_ITM}','depot','D_ITM',null,null,null),
+    ('${AREA_IT}','area',null,'IT01',null,null),
+    ('${DRV_IT}','driver',null,null,'ITD001',null),
+    ('${SHIP1}','shipper',null,null,null,'SHIP01'),
+    ('${SHIP2}','shipper',null,null,null,'SHIP02');
 
   -- 出荷SQLが照合する実在荷物（demo9000帯・照合あり）
   insert into public.deliveries (tracking_number, office_code, status) values
@@ -259,12 +274,106 @@ console.log('\n[13) DB層の不変条件：同一問合番号の活性受付は2
   ok('素のINSERTで同一番号の活性受付2本目を挿入 → unique violationで失敗', uniqueViolation);
 }
 
-console.log('\n[補足: write policyは置かない（規約どおり）]');
+// =============================================================
+// Task 2: RLS検証（5ロール・範囲外0件）— ブリーフ観点12〜17
+//   select policy = 「hq or deliveriesに同じtracking_numberが見える」＝deliveries RLS継承。
+//   「範囲外0件」は必ず「範囲内>0」と対でassertする（全部塞がっている場合と区別するため）。
+// =============================================================
+
+console.log('\n[14) RLSデータ準備: IT01の荷物（driver=ITD001/shipper=SHIP01）＋照合済み受付・KAZ未照合受付]');
+let rlsReady = false;
+{
+  // IT01の荷物（req帯・照合あり）。既存データはA01側（900000000001）とhqのみ可視の未照合KAZ群。
+  await db.exec(`
+    insert into public.deliveries (tracking_number, office_code, driver_id, shipper_id, status) values
+      ('REQ-IT0001','IT01','ITD001','SHIP01','配送中');
+  `);
+  const rIt  = await reg(['REQ-IT0001', '再配達', '2026-07-30', '午前', null, 'web', null, false]);
+  const rKaz = await reg(['KAZ11122233344', '置き配', null, null, '玄関前', 'web', null, false]);
+  ok('IT01荷物の照合済み受付を登録（created・verified=true）', rIt.result === 'created' && rIt.verified === true);
+  ok('KAZ帯の未照合受付を登録（created・verified=false・deliveriesに親なし）', rKaz.result === 'created' && rKaz.verified === false);
+  rlsReady = rIt.result === 'created' && rKaz.result === 'created';
+}
+
+console.log('\n[15) RLS 5ロール可視範囲（観点12〜15）: 各ロールで it=REQ-IT0001 / kaz=未照合 / a01=900000000001 の件数]');
+if (rlsReady) {
+  // 各ユーザーになりすまして3つの問合番号の受付件数を数える（a01は取消+受付済の履歴2行が母数）
+  const scopeCounts = (uid) => asUser(uid, async () => {
+    const q = async (tn) => Number(
+      (await db.query(`select count(*)::int n from public.reception_requests where tracking_number=$1`, [tn])).rows[0].n
+    );
+    return { it: await q('REQ-IT0001'), kaz: await q('KAZ11122233344'), a01: await q('900000000001') };
+  });
+
+  // 観点12) hq: 照合済み＋未照合の計2件が見える
+  const hq = await scopeCounts(HQ);
+  ok('hq: 照合済み受付(REQ-IT0001)=1件', hq.it === 1);
+  ok('hq: 未照合受付(KAZ)=1件（照合済み＋未照合の計2件が見える）', hq.kaz === 1 && hq.it + hq.kaz === 2);
+
+  // 観点13) area/IT01: 自営業所の荷物の受付のみ。未照合はhq以外0件
+  const itArea = await scopeCounts(AREA_IT);
+  ok('area/IT01: 自営業所の荷物の受付=1件（範囲内>0）', itArea.it === 1);
+  ok('area/IT01: KAZ未照合=0件（deliveriesに親なし＝hqのみ可視）', itArea.kaz === 0);
+  ok('area/IT01: 他営業所(A01)の受付=0件（範囲外0件）', itArea.a01 === 0);
+
+  // 観点14) area/A01: IT01・KAZは0件。対の範囲内>0は自営業所の900000000001
+  const a01Area = await scopeCounts(A01);
+  ok('area/A01: 自営業所(900000000001)の受付>0（範囲内>0の対）', a01Area.a01 > 0);
+  ok('area/A01: IT01の受付=0件・KAZ未照合=0件（範囲外0件）', a01Area.it === 0 && a01Area.kaz === 0);
+
+  // 観点15) driver: 自担当荷物の受付のみ（担当外0件）
+  const drvIt = await scopeCounts(DRV_IT);
+  ok('driver/ITD001: 自担当荷物の受付=1件（範囲内>0）', drvIt.it === 1);
+  ok('driver/ITD001: 担当外(900000000001はdriver無し)=0件・KAZ未照合=0件', drvIt.a01 === 0 && drvIt.kaz === 0);
+  const drvA01 = await scopeCounts(DRV);
+  ok('driver/DRV001: 担当外(IT01)の受付=0件・KAZ未照合=0件（範囲外0件）', drvA01.it === 0 && drvA01.kaz === 0);
+
+  // 観点15) shipper: 自荷主のみ（他荷主0件）
+  const ship1 = await scopeCounts(SHIP1);
+  ok('shipper/SHIP01: 自荷主の荷物の受付=1件（範囲内>0）', ship1.it === 1);
+  ok('shipper/SHIP01: 荷主外(900000000001はshipper無し)=0件・KAZ未照合=0件', ship1.a01 === 0 && ship1.kaz === 0);
+  const ship2 = await scopeCounts(SHIP2);
+  ok('shipper/SHIP02: 他荷主(SHIP01)の受付=0件・KAZ未照合=0件（範囲外0件）', ship2.it === 0 && ship2.kaz === 0);
+
+  // 5ロール目) depot/D_ITM: 配下営業所(IT01)のみ
+  const depot = await scopeCounts(DEPOT_ITM);
+  ok('depot/D_ITM: 配下営業所(IT01)の受付=1件（範囲内>0）', depot.it === 1);
+  ok('depot/D_ITM: 配下外(A01)=0件・KAZ未照合=0件（範囲外0件）', depot.a01 === 0 && depot.kaz === 0);
+} else {
+  ok('RLSデータ準備に失敗したため5ロール検証を実行できない', false);
+}
+
+console.log('\n[16) RLS anon（観点16）: reception_requestsへのselect grantが無い]');
+{
+  // pg_catalogでgrantの有無を確認（authenticatedにはある＝対の確認）
+  const g = (await db.query(`
+    select has_table_privilege('anon','public.reception_requests','select') as anon_sel,
+           has_table_privilege('authenticated','public.reception_requests','select') as auth_sel
+  `)).rows[0];
+  ok('anonにselect grantが無い（pg_catalog: has_table_privilege=false）', g.anon_sel === false);
+  ok('authenticatedにはselect grantがある（対の確認）', g.auth_sel === true);
+
+  // 実行時にも permission denied で弾かれる（safe_count的に捕捉して-1扱い）
+  const n = await asAnon(async () => {
+    try {
+      return Number((await db.query(`select count(*)::int n from public.reception_requests`)).rows[0].n);
+    } catch (e) {
+      return /permission denied|insufficient_privilege/i.test(e.message) ? -1 : -999;
+    }
+  });
+  ok('anonの直接selectはpermission denied（safe_count=-1扱い）', n === -1);
+}
+
+console.log('\n[補足: write policyは置かない（規約どおり）＝観点17]');
 {
   const n = (await db.query(
     `select count(*)::int n from pg_policies where schemaname='public' and tablename='reception_requests' and cmd <> 'SELECT'`
   )).rows[0].n;
   ok('reception_requests に SELECT以外のポリシーは0本', n === 0);
+  const nb = (await db.query(
+    `select count(*)::int n from pg_policies where schemaname='public' and tablename='number_bands' and cmd <> 'SELECT'`
+  )).rows[0].n;
+  ok('number_bands にも SELECT以外のポリシーは0本', nb === 0);
 }
 
 console.log(`\nreception_write pglite: ${pass} passed, ${fail} failed`);
