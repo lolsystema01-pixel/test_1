@@ -181,6 +181,27 @@ await asUser(HQ, async () => {
   ok('ビュー自体の既定順（priority desc, created_at asc）が一致', JSON.stringify(viewOrder) === JSON.stringify(['CA-PRI-2', 'CA-PRI-3', 'CA-PRI-1']));
 });
 
+console.log('\n[入力ハードニング：列長CHECK制約（セキュリティレビューI-1）]');
+await throws('transcript が上限(20000)超過でreject', () => rec('CA-LEN-TRANSCRIPT', { transcript: 'あ'.repeat(20001) }));
+await throws('summary が上限(4000)超過でreject', () => rec('CA-LEN-SUMMARY', { summary: 'あ'.repeat(4001) }));
+await throws('caller_phone が上限(32)超過でreject', () => rec('CA-LEN-PHONE', { caller_phone: '0'.repeat(33) }));
+const rLenOk = (
+  await rec('CA-LEN-OK', {
+    transcript: 'あ'.repeat(20000),
+    summary: 'あ'.repeat(4000),
+    caller_phone: '0'.repeat(32),
+  })
+).rows[0].r;
+ok('上限ちょうど（20000/4000/32）は許可される', rLenOk.result === 'recorded');
+
+console.log('\n[入力ハードニング：priority clamp（セキュリティレビューI-1・キューポイズニング対策）]');
+await rec('CA-CLAMP-BIG', { priority: 999999999 });
+const rowClampBig = (await db.query(`select priority from public.call_logs where call_sid='CA-CLAMP-BIG'`)).rows[0];
+ok('巨大priorityは9にclampされる', rowClampBig.priority === 9);
+await rec('CA-CLAMP-NEG', { priority: -50 });
+const rowClampNeg = (await db.query(`select priority from public.call_logs where call_sid='CA-CLAMP-NEG'`)).rows[0];
+ok('負のpriorityは0にclampされる', rowClampNeg.priority === 0);
+
 console.log('\n[resolve_callback：CSが解決→queueから消える／anonは拒否／再解決はalready]');
 // ★永続化して確認したいので asUserCommit（commitする版）を使う。
 const targetId = (await db.query(`select id from public.call_logs where call_sid='CA-TEST-0002'`)).rows[0].id;
@@ -210,6 +231,56 @@ await asUser(AREA, async () => {
   ok('再解決は冪等（result=already）', res2.result === 'already');
 });
 ok('★再解決後もnoteは上書きされない（最初のまま）', (await db.query(`select callback_note from public.call_logs where call_sid='CA-TEST-0002'`)).rows[0].callback_note === '折り返し完了・本人と通話済み');
+
+console.log('\n[resolve_callback：p_status=不要／待ち以外への再resolveは対象外／不正値は拒否／driver・shipperは拒否]');
+await rec('CA-RSV-1', { outcome: '折り返し要', intent: '状況照会' });
+const rsv1Id = (await db.query(`select id from public.call_logs where call_sid='CA-RSV-1'`)).rows[0].id;
+await asUserCommit(HQ, async () => {
+  const res = (await db.query(`select public.resolve_callback($1,$2,$3) r`, [rsv1Id, '不要と判断', '不要'])).rows[0].r;
+  ok('p_status=不要でresolved', res.result === 'resolved' && res.callback_status === '不要');
+});
+const rsv1Row = (await db.query(`select callback_status, callback_note from public.call_logs where call_sid='CA-RSV-1'`)).rows[0];
+ok('callback_status=不要が記録される', rsv1Row.callback_status === '不要');
+
+await asUser(HQ, async () => {
+  const res2 = (await db.query(`select public.resolve_callback($1,$2) r`, [rsv1Id, '再度メモ'])).rows[0].r;
+  ok('★不要行への再resolveは対象外（result=already・更新されない）', res2.result === 'already');
+});
+ok(
+  '★不要行のnoteは上書きされない',
+  (await db.query(`select callback_note from public.call_logs where call_sid='CA-RSV-1'`)).rows[0].callback_note === '不要と判断'
+);
+await asUser(HQ, async () => {
+  const res2b = (await db.query(`select public.resolve_callback($1,$2) r`, [targetId, '完了行への再resolveメモ'])).rows[0].r;
+  ok('★完了行への再resolveも対象外（result=already・更新されない）', res2b.result === 'already');
+});
+
+await rec('CA-RSV-2', { outcome: '折り返し要', intent: 'その他' });
+const rsv2Id = (await db.query(`select id from public.call_logs where call_sid='CA-RSV-2'`)).rows[0].id;
+await throws('p_statusに不正値を渡すとreject（許可外の値）', () =>
+  asUser(HQ, async () => {
+    await db.query(`select public.resolve_callback($1,$2,$3) r`, [rsv2Id, 'x', '保留']);
+  })
+);
+ok(
+  '不正値rejectの対象行はcallback_status=待ちのまま（変更されない）',
+  (await db.query(`select callback_status from public.call_logs where call_sid='CA-RSV-2'`)).rows[0].callback_status === '待ち'
+);
+await asUserCommit(HQ, async () => {
+  const res3 = (await db.query(`select public.resolve_callback($1,$2) r`, [rsv2Id, '通常解決'])).rows[0].r;
+  ok('待ち行への正常遷移（p_status省略時デフォルト=完了）', res3.result === 'resolved' && res3.callback_status === '完了');
+});
+
+await throws('★driverはresolve_callbackを実行不可', () =>
+  asUser(DRV, async () => {
+    await db.query(`select public.resolve_callback($1,$2) r`, [rsv1Id, 'x']);
+  })
+);
+await throws('★shipperはresolve_callbackを実行不可', () =>
+  asUser(SHIPPER, async () => {
+    await db.query(`select public.resolve_callback($1,$2) r`, [rsv1Id, 'x']);
+  })
+);
 
 console.log('\n[anonはrecord_call_logを実行できる（受電経路）が、SELECTはできない]');
 await asAnon(async () => {

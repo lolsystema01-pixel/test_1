@@ -56,6 +56,59 @@ create index if not exists idx_call_logs_callback
   on public.call_logs (callback_status, priority desc, created_at);
 -- call_sid は unique 制約で索引済み（明示のインデックスは不要）。
 
+-- =============================================================
+-- 列長CHECK制約（セキュリティレビューI-1対応）
+--   record_call_log は anon 実行可・長さ/値域チェックが無いと、巨大 transcript/summary の
+--   無制限INSERT や priority=INT_MAX を使った callback_queue の「キューポイズニング」＋テーブル肥大が成立する。
+--   char_length ベースで長文/PII列・短い分類列に上限を設定。冪等（drop→add）。
+-- =============================================================
+alter table public.call_logs drop constraint if exists call_logs_transcript_len_chk;
+alter table public.call_logs add constraint call_logs_transcript_len_chk
+  check (char_length(transcript) <= 20000);
+
+alter table public.call_logs drop constraint if exists call_logs_summary_len_chk;
+alter table public.call_logs add constraint call_logs_summary_len_chk
+  check (char_length(summary) <= 4000);
+
+alter table public.call_logs drop constraint if exists call_logs_caller_phone_len_chk;
+alter table public.call_logs add constraint call_logs_caller_phone_len_chk
+  check (char_length(caller_phone) <= 32);
+
+alter table public.call_logs drop constraint if exists call_logs_callback_note_len_chk;
+alter table public.call_logs add constraint call_logs_callback_note_len_chk
+  check (char_length(callback_note) <= 2000);
+
+alter table public.call_logs drop constraint if exists call_logs_recording_url_len_chk;
+alter table public.call_logs add constraint call_logs_recording_url_len_chk
+  check (char_length(recording_url) <= 2048);
+
+-- 短い分類列（自由文字列だが本来は短い値のみを想定）。
+alter table public.call_logs drop constraint if exists call_logs_band_key_len_chk;
+alter table public.call_logs add constraint call_logs_band_key_len_chk
+  check (char_length(band_key) <= 64);
+
+alter table public.call_logs drop constraint if exists call_logs_intent_len_chk;
+alter table public.call_logs add constraint call_logs_intent_len_chk
+  check (char_length(intent) <= 64);
+
+alter table public.call_logs drop constraint if exists call_logs_receipt_no_len_chk;
+alter table public.call_logs add constraint call_logs_receipt_no_len_chk
+  check (char_length(receipt_no) <= 64);
+
+alter table public.call_logs drop constraint if exists call_logs_tracking_number_len_chk;
+alter table public.call_logs add constraint call_logs_tracking_number_len_chk
+  check (char_length(tracking_number) <= 64);
+
+-- call_sid は実値（Twilio CallSid等）に合わせて緩めに。
+alter table public.call_logs drop constraint if exists call_logs_call_sid_len_chk;
+alter table public.call_logs add constraint call_logs_call_sid_len_chk
+  check (char_length(call_sid) <= 128);
+
+-- priority の値域（record_call_log内のclampと二重防御）。
+alter table public.call_logs drop constraint if exists call_logs_priority_range_chk;
+alter table public.call_logs add constraint call_logs_priority_range_chk
+  check (priority between 0 and 9);
+
 -- RLS：SELECTのみ。書込みポリシーは置かない（関数経由のみ）。
 alter table public.call_logs enable row level security;
 grant select on public.call_logs to authenticated;
@@ -100,6 +153,11 @@ declare
   v_ex_id           bigint;
   v_ex_callback     text;
 begin
+  -- 入力ハードニング（セキュリティレビューI-1）：priorityは 0..9 にclamp。
+  --   anon実行可のため、キューポイズニング（priority=INT_MAX等での偽の最優先化）を防ぐ。
+  --   （priorityが2値/数値順序のどちらの解釈でも 0..9 clampは矛盾しない安全策）
+  p_priority := least(greatest(coalesce(p_priority, 0), 0), 9);
+
   -- outcome='折り返し要' のときだけ callback_status='待ち' を自動セット。
   v_callback_status := case when p_outcome = '折り返し要' then '待ち' else '不要' end;
 
@@ -111,7 +169,7 @@ begin
   ) values (
     p_call_sid, coalesce(p_channel, 'ai_phone'), p_started_at, p_ended_at, p_duration_sec,
     p_caller_phone, p_tracking_number, p_band_key, p_intent, p_summary,
-    p_transcript, p_recording_url, coalesce(p_outcome, 'AI完結'), p_receipt_no, coalesce(p_priority, 0),
+    p_transcript, p_recording_url, coalesce(p_outcome, 'AI完結'), p_receipt_no, p_priority,
     v_callback_status, auth.uid()
   )
   on conflict (call_sid) do nothing
@@ -154,10 +212,19 @@ comment on function public.record_call_log(
 -- =============================================================
 -- 記録口② resolve_callback（SECURITY DEFINER・authenticatedのみ・CS認可）
 --   折り返し完了・不要の解決。お客様側（driver/shipper/anon）は触れない。
+--   p_status='完了'|'不要' を記録（正本ドラフトの「折り返し完了・不要を記録」に対応）。
+--   UPDATEは where callback_status='待ち' の条件付き実行＝check-then-actのレースを排除
+--   （通常レビュー指摘：同一call_idへの同時resolve_callback2本が両方通過する問題の修正）。
+--   これにより「待ち」行のみが遷移し、既に'完了'/'不要'の行への誤上書きも同時に防止する。
 -- =============================================================
+-- 旧シグネチャ(bigint,text)を明示drop：同一call数の2引数呼び出しがdefault引数解決で
+-- 旧関数と衝突する事故を防ぐ（過去にこのファイルを適用済みの環境向け・冪等）。
+drop function if exists public.resolve_callback(bigint, text);
+
 create or replace function public.resolve_callback(
   p_call_id bigint,
-  p_note    text default null
+  p_note    text default null,
+  p_status  text default '完了'
 )
 returns jsonb
 language plpgsql
@@ -165,10 +232,10 @@ security definer
 set search_path = public
 as $$
 declare
-  v_uid    uuid := auth.uid();
-  v_role   text := public.my_role();
-  v_status text;
-  v_by     uuid;
+  v_uid       uuid := auth.uid();
+  v_role      text := public.my_role();
+  v_exists    boolean;
+  v_rowcount  int;
 begin
   -- authz①：未認証（anon）は拒否。
   if v_uid is null then
@@ -181,44 +248,54 @@ begin
       using errcode = '42501';
   end if;
 
-  select callback_status, callback_by into v_status, v_by
-  from public.call_logs
-  where id = p_call_id;
+  -- 入力検証：callback_statusとして許可される値のみ（完了／不要）。
+  if p_status not in ('完了','不要') then
+    raise exception '不正な callback_status です（%）。許可: 完了／不要', p_status
+      using errcode = '23514';
+  end if;
 
+  -- 対象存在チェック（見つからなければ P0002）。
+  select true into v_exists from public.call_logs where id = p_call_id;
   if not found then
     raise exception '対象の通話ログが見つかりません（call_id=%）', p_call_id
       using errcode = 'P0002';
   end if;
 
-  -- 二重解決を避け、既に完了なら冪等に既存を返す。
-  if v_status = '完了' then
-    return jsonb_build_object(
-      'result', 'already',
-      'call_id', p_call_id,
-      'callback_by', v_by
-    );
-  end if;
-
+  -- 条件付きUPDATE：callback_status='待ち' の行のみ遷移（check-then-actではなくDB側で単一操作として原子的に判定）。
+  --   同時に2本のresolve_callbackが走っても、'待ち'条件を満たすのは最初の1本だけ＝後続はrowcount=0で'already'。
+  --   既に'完了'/'不要'の行に対する呼び出しも同じ経路で対象外になる（誤上書き防止）。
   update public.call_logs
-     set callback_status = '完了',
+     set callback_status = p_status,
          callback_by     = v_uid,
          callback_at     = now(),
          callback_note   = p_note
-   where id = p_call_id;
+   where id = p_call_id
+     and callback_status = '待ち';
+
+  get diagnostics v_rowcount = row_count;
+
+  if v_rowcount = 0 then
+    -- 既に解決済み（完了/不要）または対象外：冪等に既存状態を返す（上書きしない）。
+    return jsonb_build_object(
+      'result', 'already',
+      'call_id', p_call_id
+    );
+  end if;
 
   return jsonb_build_object(
     'result', 'resolved',
     'call_id', p_call_id,
+    'callback_status', p_status,
     'callback_by', v_uid
   );
 end $$;
 
-revoke execute on function public.resolve_callback(bigint, text) from public;
-grant execute on function public.resolve_callback(bigint, text) to authenticated;
+revoke execute on function public.resolve_callback(bigint, text, text) from public;
+grant execute on function public.resolve_callback(bigint, text, text) to authenticated;
 -- ★anonには実行権を与えない（REVOKE段階で拒否＋関数内authzの二重防御）。
 
-comment on function public.resolve_callback(bigint, text) is
-  '折り返し解決の記録口（§9.2）。CS(hq/depot/area)のみ実行可・二重解決は冪等（already）。SECURITY DEFINER';
+comment on function public.resolve_callback(bigint, text, text) is
+  '折り返し解決の記録口（§9.2）。CS(hq/depot/area)のみ実行可・p_status=完了/不要を記録・待ち行のみ条件付きUPDATEで遷移（同時解決・誤上書きを防止）・対象外は冪等（already）。SECURITY DEFINER';
 
 
 -- =============================================================
