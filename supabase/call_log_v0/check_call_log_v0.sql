@@ -6,21 +6,22 @@
 --   （hq=…0001／depot(D01)=…0002／area A01=…00a1／driver DRV001=…00d1／shipper SHIP01=…00f1）
 -- =============================================================
 
--- ⓪ 全体件数・result分布 --------------------------------------------------
+-- ⓪ 全体件数・outcome分布 -------------------------------------------------
 select count(*) as 総件数 from public.call_logs;
-select result, count(*) from public.call_logs group by result order by result;
+select outcome, count(*) from public.call_logs group by outcome order by outcome;
 -- 期待（seed直後）: 総件数7・AI完結2/折り返し要2/転送済1/いたずら1/中断1
 
 
 -- ① 冪等：call_sidの重複はduplicateで行が増えない ---------------------------
 select public.record_call_log(p_call_sid := 'CALL-SEED-0001') as 再実行結果;
--- 期待: {"result":"duplicate","call_id":<既存id>,"call_sid":"CALL-SEED-0001","callback_status":"AI完結相当=不要"}
+-- 期待: {"result":"duplicate","call_id":<既存id>,"call_sid":"CALL-SEED-0001","callback_status":"不要"}
 select count(*) as 総件数_再確認 from public.call_logs;
 -- 期待: ⓪と同じ件数のまま（増えない）
 
 
 -- ② callback_queue：優先度→古い順で並ぶ -------------------------------------
-select call_sid, tracking_number, topic, priority, created_at
+--    列は正本準拠（受信時刻=created_at・発信者番号・番号帯・用件=intent・要約=summary・優先度）。
+select call_sid, created_at, caller_phone, band_key, intent, summary, priority
 from public.callback_queue
 order by priority desc, created_at asc;
 -- 期待: CALL-SEED-0004（クレーム・priority=9）が先頭、CALL-SEED-0003（priority=0）が2番目。
@@ -37,17 +38,17 @@ begin;
     select id from public.call_logs where call_sid = 'CALL-SEED-0003';
 
   select public.resolve_callback((select id from _target), '担当者から折り返し完了・条件確認済み') as 解決結果;
-  -- 期待: {"result":"resolved","call_id":<id>,"assignee":"00000000-0000-0000-0000-0000000000a1"}
+  -- 期待: {"result":"resolved","call_id":<id>,"callback_by":"00000000-0000-0000-0000-0000000000a1"}
 
-  select callback_status, callback_assignee, callback_at, callback_memo
+  select callback_status, callback_by, callback_at, callback_note
     from public.call_logs where call_sid = 'CALL-SEED-0003';
-  -- 期待: callback_status='完了'・callback_assignee=上記sub・callback_at NOT NULL・callback_memo=上記文言
+  -- 期待: callback_status='完了'・callback_by=上記sub・callback_at NOT NULL・callback_note=上記文言
 
   select call_sid from public.callback_queue where call_sid = 'CALL-SEED-0003';
   -- 期待: 0行（queueから消える）
 
   select public.resolve_callback((select id from _target), '再解決テスト') as 再解決結果;
-  -- 期待: {"result":"already", ...}（冪等・memoは上書きされない）
+  -- 期待: {"result":"already", ...}（冪等・callback_noteは上書きされない）
 rollback;  -- ★デモの解決は戻す（後続の④の件数に影響しないように）
 
 

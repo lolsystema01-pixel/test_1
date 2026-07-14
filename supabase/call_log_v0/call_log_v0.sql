@@ -1,6 +1,7 @@
 -- =============================================================
 -- 通話・対応ログ＋折り返しリスト v0 — 表 call_logs ＋ 記録口2関数 ＋ ビュー callback_queue
 --   対応: 要件定義 §9.2「通話・対応ログ」エンティティ／設計原理§0「例外はすべて折り返しリストに落ちる」。
+--   正本: docs/shijisho_drafts/shijisho_call_log_v0_1_draft.md（承認済み）の列定義に整合。
 --   指示書❷（AI電話計画）。電話番号申請・会話エンジン(❸)・音声接続(❹)とは無関係に着手可能。
 -- 実行: Supabase SQL Editor。1文ずつコピペ→Run（ブロック選択でCtrl+Enter個別実行）。
 -- =============================================================
@@ -11,24 +12,35 @@
 -- =============================================================
 
 create table if not exists public.call_logs (
+  -- 通話識別 -------------------------------------------------------------
   id                 bigint generated always as identity primary key,
   call_sid           text not null unique,        -- 通話ID（Twilio等）。record_call_log の冪等キー
+  channel            text not null default 'ai_phone'
+                     check (channel in ('ai_phone','phone')), -- 経路（AI電話 / 電話）
+  started_at         timestamptz,                  -- 通話開始時刻
+  ended_at           timestamptz,                  -- 通話終了時刻
+  duration_sec       integer,                      -- 通話時間（秒）
+  -- 相手 -----------------------------------------------------------------
   caller_phone       text,                         -- 発信者番号（非通知はnull）
+  -- 内容 -----------------------------------------------------------------
   tracking_number    text,                         -- 問合番号（判明時のみ・FKなしのゆるい参照）
   band_key           text,                         -- 番号帯（number_bands.band_key 相当・FKなし）
-  topic              text,                         -- 用件分類（再配達/時間変更/置き配/問合せ/クレーム/その他 等・自由文字列）
-  ai_summary         text,                         -- AI要約
+  intent             text,                         -- 用件分類（再配達/状況照会/クレーム/その他 等・自由文字列）
+  summary            text,                         -- AI要約
   transcript         text,                         -- 全文文字起こし
   recording_url      text,                         -- 録音URL（メタのみ・音声本体はTwilio側・保持期間は範囲外）
-  result             text not null
-                     check (result in ('AI完結','転送済','折り返し要','中断','いたずら')),
+  -- 結果 -----------------------------------------------------------------
+  outcome            text not null default 'AI完結'
+                     check (outcome in ('AI完結','転送済','折り返し要','中断','いたずら')),
   receipt_no         text,                         -- 受付登録につながった場合の受付番号（reception_write_v0連携・FKなし）
   priority           int not null default 0,       -- 優先度（大きいほど先頭。クレーム等はengine側で高くする）
+  -- 折り返し管理 ---------------------------------------------------------
   callback_status    text not null default '不要'
                      check (callback_status in ('待ち','完了','不要')),
-  callback_assignee  uuid,                         -- 掛け直し担当（auth.uid()）
+  callback_by        uuid,                         -- 掛け直し担当（auth.uid()）
   callback_at        timestamptz,                  -- 掛け直し完了時刻
-  callback_memo      text,
+  callback_note      text,                         -- 折り返しメモ
+  -- 記録メタ -------------------------------------------------------------
   created_at         timestamptz not null default now(),
   created_by         uuid                          -- 記録時の auth.uid()（anon／system はnull）
 );
@@ -62,16 +74,20 @@ create policy call_logs_cs on public.call_logs for select to authenticated
 -- =============================================================
 create or replace function public.record_call_log(
   p_call_sid         text,
-  p_caller_phone     text default null,
-  p_tracking_number  text default null,
-  p_band_key         text default null,
-  p_topic            text default null,
-  p_ai_summary       text default null,
-  p_transcript       text default null,
-  p_recording_url    text default null,
-  p_result           text default 'AI完結',
-  p_receipt_no       text default null,
-  p_priority         int  default 0
+  p_caller_phone     text        default null,
+  p_tracking_number  text        default null,
+  p_band_key         text        default null,
+  p_intent           text        default null,
+  p_summary          text        default null,
+  p_transcript       text        default null,
+  p_recording_url    text        default null,
+  p_outcome          text        default 'AI完結',
+  p_receipt_no       text        default null,
+  p_priority         int         default 0,
+  p_channel          text        default 'ai_phone',
+  p_started_at       timestamptz default null,
+  p_ended_at         timestamptz default null,
+  p_duration_sec     int         default null
 )
 returns jsonb
 language plpgsql
@@ -84,15 +100,18 @@ declare
   v_ex_id           bigint;
   v_ex_callback     text;
 begin
-  -- result='折り返し要' のときだけ callback_status='待ち' を自動セット。
-  v_callback_status := case when p_result = '折り返し要' then '待ち' else '不要' end;
+  -- outcome='折り返し要' のときだけ callback_status='待ち' を自動セット。
+  v_callback_status := case when p_outcome = '折り返し要' then '待ち' else '不要' end;
 
   insert into public.call_logs (
-    call_sid, caller_phone, tracking_number, band_key, topic, ai_summary,
-    transcript, recording_url, result, receipt_no, priority, callback_status, created_by
+    call_sid, channel, started_at, ended_at, duration_sec,
+    caller_phone, tracking_number, band_key, intent, summary,
+    transcript, recording_url, outcome, receipt_no, priority,
+    callback_status, created_by
   ) values (
-    p_call_sid, p_caller_phone, p_tracking_number, p_band_key, p_topic, p_ai_summary,
-    p_transcript, p_recording_url, coalesce(p_result, 'AI完結'), p_receipt_no, coalesce(p_priority, 0),
+    p_call_sid, coalesce(p_channel, 'ai_phone'), p_started_at, p_ended_at, p_duration_sec,
+    p_caller_phone, p_tracking_number, p_band_key, p_intent, p_summary,
+    p_transcript, p_recording_url, coalesce(p_outcome, 'AI完結'), p_receipt_no, coalesce(p_priority, 0),
     v_callback_status, auth.uid()
   )
   on conflict (call_sid) do nothing
@@ -120,16 +139,16 @@ begin
 end $$;
 
 revoke execute on function public.record_call_log(
-  text, text, text, text, text, text, text, text, text, text, int
+  text, text, text, text, text, text, text, text, text, text, int, text, timestamptz, timestamptz, int
 ) from public;
 grant execute on function public.record_call_log(
-  text, text, text, text, text, text, text, text, text, text, int
+  text, text, text, text, text, text, text, text, text, text, int, text, timestamptz, timestamptz, int
 ) to authenticated, anon;
 
 comment on function public.record_call_log(
-  text, text, text, text, text, text, text, text, text, text, int
+  text, text, text, text, text, text, text, text, text, text, int, text, timestamptz, timestamptz, int
 ) is
-  '通話・対応ログの記録口（§9.2）。call_sidで冪等・result=折り返し要でcallback_status=待ちを自動セット。SECURITY DEFINER・authenticated/anon実行可';
+  '通話・対応ログの記録口（§9.2）。call_sidで冪等・outcome=折り返し要でcallback_status=待ちを自動セット。SECURITY DEFINER・authenticated/anon実行可';
 
 
 -- =============================================================
@@ -138,7 +157,7 @@ comment on function public.record_call_log(
 -- =============================================================
 create or replace function public.resolve_callback(
   p_call_id bigint,
-  p_memo    text default null
+  p_note    text default null
 )
 returns jsonb
 language plpgsql
@@ -146,10 +165,10 @@ security definer
 set search_path = public
 as $$
 declare
-  v_uid      uuid := auth.uid();
-  v_role     text := public.my_role();
-  v_status   text;
-  v_assignee uuid;
+  v_uid    uuid := auth.uid();
+  v_role   text := public.my_role();
+  v_status text;
+  v_by     uuid;
 begin
   -- authz①：未認証（anon）は拒否。
   if v_uid is null then
@@ -162,7 +181,7 @@ begin
       using errcode = '42501';
   end if;
 
-  select callback_status, callback_assignee into v_status, v_assignee
+  select callback_status, callback_by into v_status, v_by
   from public.call_logs
   where id = p_call_id;
 
@@ -176,21 +195,21 @@ begin
     return jsonb_build_object(
       'result', 'already',
       'call_id', p_call_id,
-      'assignee', v_assignee
+      'callback_by', v_by
     );
   end if;
 
   update public.call_logs
-     set callback_status   = '完了',
-         callback_assignee = v_uid,
-         callback_at       = now(),
-         callback_memo     = p_memo
+     set callback_status = '完了',
+         callback_by     = v_uid,
+         callback_at     = now(),
+         callback_note   = p_note
    where id = p_call_id;
 
   return jsonb_build_object(
     'result', 'resolved',
     'call_id', p_call_id,
-    'assignee', v_uid
+    'callback_by', v_uid
   );
 end $$;
 
@@ -205,10 +224,11 @@ comment on function public.resolve_callback(bigint, text) is
 -- =============================================================
 -- ビュー callback_queue（security_invoker=on）— 折り返し待ちを優先度→古い順で並べる
 --   配達センターが上から掛け直すための画面の元（v0の閲覧はSupabase Table Editor／簡易表示）。
+--   列（正本§やること）：受信時刻・発信者番号・番号帯・用件・要約・優先度。
 -- =============================================================
 create or replace view public.callback_queue
 with (security_invoker=on) as
-select id, call_sid, caller_phone, tracking_number, topic, ai_summary, priority, created_at
+select id, call_sid, created_at, caller_phone, tracking_number, band_key, intent, summary, priority
 from public.call_logs
 where callback_status = '待ち'
 order by priority desc, created_at asc;

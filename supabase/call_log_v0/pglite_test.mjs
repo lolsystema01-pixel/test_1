@@ -91,39 +91,59 @@ const rec = (sid, opts = {}) =>
        p_caller_phone    := $2,
        p_tracking_number := $3,
        p_band_key        := $4,
-       p_topic           := $5,
-       p_ai_summary      := $6,
+       p_intent          := $5,
+       p_summary         := $6,
        p_transcript      := $7,
        p_recording_url   := $8,
-       p_result          := $9,
+       p_outcome         := $9,
        p_receipt_no      := $10,
-       p_priority        := $11
+       p_priority        := $11,
+       p_channel         := $12,
+       p_started_at      := $13,
+       p_ended_at        := $14,
+       p_duration_sec    := $15
      ) r`,
     [
       sid,
       opts.caller_phone ?? null,
       opts.tracking_number ?? null,
       opts.band_key ?? null,
-      opts.topic ?? null,
-      opts.ai_summary ?? null,
+      opts.intent ?? null,
+      opts.summary ?? null,
       opts.transcript ?? null,
       opts.recording_url ?? null,
-      opts.result ?? 'AI完結',
+      opts.outcome ?? 'AI完結',
       opts.receipt_no ?? null,
       opts.priority ?? 0,
+      opts.channel ?? 'ai_phone',
+      opts.started_at ?? null,
+      opts.ended_at ?? null,
+      opts.duration_sec ?? null,
     ]
   );
 const countCallLogs = async () => (await db.query(`select count(*)::int n from public.call_logs`)).rows[0].n;
 
 console.log('\n[記録：record_call_logで1行入る]');
-const r1 = (await rec('CA-TEST-0001', { caller_phone: '090-0000-0001', tracking_number: '900000000001', band_key: 'demo9000', topic: '問合せ' })).rows[0].r;
+const r1 = (await rec('CA-TEST-0001', {
+  caller_phone: '090-0000-0001',
+  tracking_number: '900000000001',
+  band_key: 'demo9000',
+  intent: '状況照会',
+  summary: '配達予定の確認',
+  channel: 'ai_phone',
+  started_at: '2026-07-15T09:00:00+09:00',
+  ended_at: '2026-07-15T09:02:30+09:00',
+  duration_sec: 150,
+})).rows[0].r;
 ok('返り値 result=recorded', r1.result === 'recorded');
 ok('call_id が採番される', typeof r1.call_id === 'number' || typeof r1.call_id === 'bigint');
 ok('call_sid が一致', r1.call_sid === 'CA-TEST-0001');
-ok('callback_status=不要（result既定=AI完結）', r1.callback_status === '不要');
+ok('callback_status=不要（outcome既定=AI完結）', r1.callback_status === '不要');
 ok('全体1行', (await countCallLogs()) === 1);
-const row1 = (await db.query(`select tracking_number, band_key, topic, callback_status from public.call_logs where call_sid='CA-TEST-0001'`)).rows[0];
-ok('列が正しく入る（tracking_number/band_key/topic）', row1.tracking_number === '900000000001' && row1.band_key === 'demo9000' && row1.topic === '問合せ');
+const row1 = (await db.query(`select tracking_number, band_key, intent, summary, channel, duration_sec, started_at, outcome, callback_status from public.call_logs where call_sid='CA-TEST-0001'`)).rows[0];
+ok('列が正しく入る（tracking_number/band_key/intent/summary）', row1.tracking_number === '900000000001' && row1.band_key === 'demo9000' && row1.intent === '状況照会' && row1.summary === '配達予定の確認');
+ok('★通話メタが入る（channel=ai_phone/duration_sec=150/started_at NOT NULL）', row1.channel === 'ai_phone' && row1.duration_sec === 150 && row1.started_at !== null);
+ok('outcome 既定=AI完結', row1.outcome === 'AI完結');
 
 console.log('\n[冪等：同じcall_sidで再実行→duplicate・行が増えない]');
 const r1b = (await rec('CA-TEST-0001', { caller_phone: '999-9999-9999' })).rows[0].r;
@@ -133,10 +153,10 @@ ok('行数は増えない（1行のまま）', (await countCallLogs()) === 1);
 const stillOld = (await db.query(`select caller_phone from public.call_logs where call_sid='CA-TEST-0001'`)).rows[0].caller_phone;
 ok('重複実行の引数では上書きされない（初回の値のまま）', stillOld === '090-0000-0001');
 
-console.log('\n[折り返し：result=折り返し要→callback_status=待ち／AI完結→不要]');
-const r2 = (await rec('CA-TEST-0002', { result: '折り返し要', topic: '再配達', priority: 0 })).rows[0].r;
+console.log('\n[折り返し：outcome=折り返し要→callback_status=待ち／AI完結→不要]');
+const r2 = (await rec('CA-TEST-0002', { outcome: '折り返し要', intent: '再配達', priority: 0 })).rows[0].r;
 ok('折り返し要→callback_status=待ち', r2.callback_status === '待ち');
-const r3 = (await rec('CA-TEST-0003', { result: 'AI完結', topic: '問合せ' })).rows[0].r;
+const r3 = (await rec('CA-TEST-0003', { outcome: 'AI完結', intent: '状況照会' })).rows[0].r;
 ok('AI完結→callback_status=不要', r3.callback_status === '不要');
 
 console.log('\n[callback_queue：待ちのみ載る（HQで確認）]');
@@ -147,9 +167,9 @@ await asUser(HQ, async () => {
 });
 
 console.log('\n[優先度順：priority高→古い順でqueueが並ぶ]');
-await rec('CA-PRI-1', { result: '折り返し要', priority: 1, topic: '低優先' });
-await rec('CA-PRI-2', { result: '折り返し要', priority: 5, topic: '高優先(先)' });
-await rec('CA-PRI-3', { result: '折り返し要', priority: 5, topic: '高優先(後)' });
+await rec('CA-PRI-1', { outcome: '折り返し要', priority: 1, intent: '低優先' });
+await rec('CA-PRI-2', { outcome: '折り返し要', priority: 5, intent: '高優先(先)' });
+await rec('CA-PRI-3', { outcome: '折り返し要', priority: 5, intent: '高優先(後)' });
 // created_at の順序を決定的にする（同priority内は古い順＝CA-PRI-2が先）。
 await db.exec(`update public.call_logs set created_at = now() - interval '10 minutes' where call_sid='CA-PRI-2'`);
 await db.exec(`update public.call_logs set created_at = now() - interval '5 minutes'  where call_sid='CA-PRI-3'`);
@@ -167,13 +187,13 @@ const targetId = (await db.query(`select id from public.call_logs where call_sid
 await asUserCommit(AREA, async () => {
   const res = (await db.query(`select public.resolve_callback($1,$2) r`, [targetId, '折り返し完了・本人と通話済み'])).rows[0].r;
   ok('返り値 result=resolved', res.result === 'resolved');
-  ok('assignee=area(AREA)のuid', res.assignee === AREA);
+  ok('callback_by=area(AREA)のuid', res.callback_by === AREA);
 });
-const resolved = (await db.query(`select callback_status, callback_assignee, callback_at, callback_memo from public.call_logs where call_sid='CA-TEST-0002'`)).rows[0];
+const resolved = (await db.query(`select callback_status, callback_by, callback_at, callback_note from public.call_logs where call_sid='CA-TEST-0002'`)).rows[0];
 ok('callback_status=完了', resolved.callback_status === '完了');
-ok('callback_assignee=area(AREA)', resolved.callback_assignee === AREA);
+ok('callback_by=area(AREA)', resolved.callback_by === AREA);
 ok('callback_at が入る', resolved.callback_at !== null);
-ok('callback_memo が入る', resolved.callback_memo === '折り返し完了・本人と通話済み');
+ok('callback_note が入る', resolved.callback_note === '折り返し完了・本人と通話済み');
 await asUser(HQ, async () => {
   const q = (await db.query(`select call_sid from public.callback_queue`)).rows.map((r) => r.call_sid);
   ok('解決後 CA-TEST-0002 はqueueから消える', !q.includes('CA-TEST-0002'));
@@ -189,7 +209,7 @@ await asUser(AREA, async () => {
   const res2 = (await db.query(`select public.resolve_callback($1,$2) r`, [targetId, '再解決メモ'])).rows[0].r;
   ok('再解決は冪等（result=already）', res2.result === 'already');
 });
-ok('★再解決後もmemoは上書きされない（最初のまま）', (await db.query(`select callback_memo from public.call_logs where call_sid='CA-TEST-0002'`)).rows[0].callback_memo === '折り返し完了・本人と通話済み');
+ok('★再解決後もnoteは上書きされない（最初のまま）', (await db.query(`select callback_note from public.call_logs where call_sid='CA-TEST-0002'`)).rows[0].callback_note === '折り返し完了・本人と通話済み');
 
 console.log('\n[anonはrecord_call_logを実行できる（受電経路）が、SELECTはできない]');
 await asAnon(async () => {
