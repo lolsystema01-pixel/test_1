@@ -6,8 +6,21 @@
 --   ※【AI】が同内容を staging に seed として投入する。
 -- =============================================================
 
+-- ⚠⚠ RETIRED（2026-07-17・Master部分のみ）: address_master と master_staging は撤去済み（⑤）。
+--   → **このファイルは今のままでは §1 の truncate で落ちます**（master_staging が存在しないため）。
+--   ・全国Master の読込（§3・§6 の master_staging → address_master）は **retire**。後継は area_master_v0/。
+--   ・**ZonePlan の読込（§2・§5）は現役**（zoneplan_staging → zone_plan。dispatch_v0 が
+--     zoneplan_staging から分割閾値を読むため生きている）。
+--   ★ zone_plan を再ロードしたい場合は、master_staging 側の行（下の truncate・§3・§6）を
+--     読み飛ばし、ZonePlan の §2・§5 だけを選択実行してください。
+--   ⚠ ただし zone_plan は②で **新語彙1,653件** が入っています。このファイルの ZonePlan seed は
+--     **旧語彙の愛知ダミー8件**（§4 のハードコード）なので、素直に流すと旧語彙が復活し、
+--     ゲート seq 7・8 が再び赤くなります（⑤の案aで掃除した行が戻る）。
+--   経緯: supabase/vocab_fix_v0/README.md
+-- =============================================================
+
 -- §1. ステージングを毎回リセット --------------------------------
-truncate public.master_staging;
+-- truncate public.master_staging;   -- RETIRED: master_staging は⑤で drop 済み
 truncate public.zoneplan_staging;
 
 -- §2. ZonePlan CSV を staging へ ------------------------------

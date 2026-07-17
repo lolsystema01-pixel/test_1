@@ -92,8 +92,17 @@ where tracking_number = '279113440026';
 --   ・対象＝共通ID未付与（保留）の荷物のみ（既に解決済みは触らない）。
 --   ・住所判定(match_v0)＋拠点振分(assign_office_v0)と同一ロジックを再適用。
 -- -------------------------------------------------------------
+-- ⚠⚠ RETIRED（2026-07-17）: §5-1（下の再判定クエリ）は実行しないでください。
+--   ・参照先の **address_master は⑤で drop 済み**（指示書「語彙是正→address_master 撤去 v0.1」）
+--     ＝実行すれば「テーブル無し」で落ちます。
+--   ・後継は **common_id_assign_v0/common_id_rematch_v0.sql**（area_master 直lookup での再マッチ）。
+--     保留荷物の再判定はそちらを使ってください。
+--   ・§1〜§4（未登録住所の記録・一覧・修正）と §6（件数）は **現役**です。
+--     この表明は §5-1 だけを対象にしています。
+--   経緯: supabase/vocab_fix_v0/README.md ／ docs/handoff_status_v0.md §3.1
+-- -------------------------------------------------------------
 
--- §5-1) 住所→共通ID（正規化して前方一致・最長一致採用。match_v0 と同一規則）
+-- §5-1) 住所→共通ID（正規化して前方一致・最長一致採用。match_v0 と同一規則）  ← RETIRED（上記）
 with norm as (
   select tracking_number, public.normalize_addr(address) as na
   from public.deliveries
