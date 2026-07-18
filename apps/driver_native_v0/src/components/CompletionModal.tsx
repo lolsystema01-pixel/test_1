@@ -7,17 +7,22 @@ import { Stop } from '../types';
 
 type Step = 'choice' | 'photo';
 
+// 1配達につき最大3枚（2026-07-18 LOL確定）。
+const MAX_PHOTOS = 3;
+const PHOTO_SLOTS = [0, 1, 2] as const;
+
 interface Props {
   visible: boolean;
   stop: Stop | null;
   onSelectHandoff: () => void;
-  // 置き配確定：写真を撮っていれば localUri・撮っていなければ null（撮影は必須にしない）
-  onConfirmDropoff: (photoUri: string | null) => void;
+  // 置き配確定：撮影した順で最大3枚（0枚=撮影なしも可・撮影は必須にしない）
+  onConfirmDropoff: (photoUris: string[]) => void;
   onCancel: () => void;
 }
 
 // 撮影ガイド文言（要件8.5）：置き配写真は「荷物と置き場所」の証跡。プライバシーに配慮する。
-const PHOTO_GUIDE = '荷物と置き場所が分かるように撮影してください。人物・車のナンバー・室内は写さないでください。';
+const PHOTO_GUIDE =
+  '荷物と置き場所が分かるように撮影してください（最大3枚・0枚でも完了できます）。人物・車のナンバー・室内は写さないでください。';
 
 export default function CompletionModal({
   visible,
@@ -27,13 +32,14 @@ export default function CompletionModal({
   onCancel,
 }: Props) {
   const [step, setStep] = useState<Step>('choice');
-  const [photoUri, setPhotoUri] = useState<string | null>(null);
+  // 3枠固定（null=未撮影）。indexがそのままseq-1（Storageパスの{seq}に対応）。
+  const [photos, setPhotos] = useState<(string | null)[]>([null, null, null]);
   const [permissionDenied, setPermissionDenied] = useState(false);
 
   useEffect(() => {
     if (visible) {
       setStep('choice');
-      setPhotoUri(null);
+      setPhotos([null, null, null]);
       setPermissionDenied(false);
     }
   }, [visible]);
@@ -42,7 +48,7 @@ export default function CompletionModal({
     setStep('photo');
   };
 
-  const handleTakePhoto = async () => {
+  const handleTakePhoto = async (slot: number) => {
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (permission.status !== 'granted') {
@@ -52,15 +58,17 @@ export default function CompletionModal({
       setPermissionDenied(false);
       const result = await ImagePicker.launchCameraAsync({ quality: 0.4 });
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        setPhotoUri(result.assets[0].uri);
+        setPhotos((prev) => prev.map((p, i) => (i === slot ? result.assets[0].uri : p)));
       }
     } catch {
       // カメラ起動自体の失敗も静かに無視する（撮影必須にしない＝「写真なしで完了」に進める）
     }
   };
 
+  const photoCount = photos.filter((p) => p !== null).length;
+
   const handleConfirm = () => {
-    onConfirmDropoff(photoUri);
+    onConfirmDropoff(photos.filter((p): p is string => p !== null));
   };
 
   return (
@@ -110,25 +118,32 @@ export default function CompletionModal({
             <Text style={styles.title}>置き配写真を撮影</Text>
             <Text style={styles.photoGuide}>{PHOTO_GUIDE}</Text>
 
-            <Pressable
-              style={[styles.photoBox, photoUri && styles.photoBoxCaptured]}
-              onPress={handleTakePhoto}
-            >
-              {photoUri ? (
-                <>
-                  <Image source={{ uri: photoUri }} style={styles.photoPreview} resizeMode="cover" />
-                  <View style={styles.retakeBadge}>
-                    <Ionicons name="camera-reverse-outline" size={14} color={colors.white} />
-                    <Text style={styles.retakeBadgeText}>タップで撮り直す</Text>
-                  </View>
-                </>
-              ) : (
-                <>
-                  <Ionicons name="camera-outline" size={40} color={colors.faint} />
-                  <Text style={styles.photoText}>タップして撮影</Text>
-                </>
-              )}
-            </Pressable>
+            <View style={styles.photoRow}>
+              {PHOTO_SLOTS.map((slot) => {
+                const uri = photos[slot];
+                return (
+                  <Pressable
+                    key={slot}
+                    style={[styles.photoBox, uri && styles.photoBoxCaptured]}
+                    onPress={() => handleTakePhoto(slot)}
+                  >
+                    {uri ? (
+                      <>
+                        <Image source={{ uri }} style={styles.photoPreview} resizeMode="cover" />
+                        <View style={styles.retakeBadge}>
+                          <Ionicons name="camera-reverse-outline" size={12} color={colors.white} />
+                        </View>
+                      </>
+                    ) : (
+                      <>
+                        <Ionicons name="camera-outline" size={26} color={colors.faint} />
+                        <Text style={styles.photoText}>{slot + 1}枚目</Text>
+                      </>
+                    )}
+                  </Pressable>
+                );
+              })}
+            </View>
 
             {permissionDenied ? (
               <Text style={styles.note}>
@@ -137,7 +152,9 @@ export default function CompletionModal({
             ) : null}
 
             <Pressable style={styles.confirmBtn} onPress={handleConfirm}>
-              <Text style={styles.confirmText}>{photoUri ? '確定して次へ' : '写真なしで完了'}</Text>
+              <Text style={styles.confirmText}>
+                {photoCount > 0 ? `確定して次へ（${photoCount}枚）` : '写真なしで完了'}
+              </Text>
             </Pressable>
           </>
         )}
@@ -225,9 +242,14 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 4,
   },
-  photoBox: {
+  photoRow: {
+    flexDirection: 'row',
+    gap: 10,
     marginTop: 14,
-    height: 160,
+  },
+  photoBox: {
+    flex: 1,
+    height: 100,
     borderRadius: radius.lg,
     borderWidth: 1.5,
     borderColor: colors.line,
@@ -235,7 +257,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 6,
     overflow: 'hidden',
   },
   photoBoxCaptured: {
@@ -249,20 +271,11 @@ const styles = StyleSheet.create({
   },
   retakeBadge: {
     position: 'absolute',
-    bottom: 8,
-    right: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
+    bottom: 5,
+    right: 5,
     backgroundColor: 'rgba(10,14,20,0.6)',
     borderRadius: radius.pill,
-    paddingVertical: 4,
-    paddingHorizontal: 9,
-  },
-  retakeBadgeText: {
-    color: colors.white,
-    fontSize: 10.5,
-    fontWeight: '700',
+    padding: 4,
   },
   photoText: {
     fontSize: 13,

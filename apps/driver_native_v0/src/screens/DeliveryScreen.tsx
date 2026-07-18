@@ -12,7 +12,9 @@ interface Props {
   upcoming: Stop[];
   allStops: Stop[];
   counts: Counts;
-  onFinalizeStop: (stop: Stop, status: StopStatus, photoUri?: string | null) => void;
+  onFinalizeStop: (stop: Stop, status: StopStatus, photoUris?: string[]) => void;
+  // 日内再訪（LOL確定2026-07-18）：不在の荷物を未処理に戻して再度タップできるようにする
+  onRedispatch: (stop: Stop) => void;
   showToast: (message: string) => void;
 }
 
@@ -22,21 +24,28 @@ export default function DeliveryScreen({
   allStops,
   counts,
   onFinalizeStop,
+  onRedispatch,
   showToast,
 }: Props) {
   const [modalVisible, setModalVisible] = useState(false);
   const warnings = nextStop ? stopWarnings(nextStop, allStops) : [];
+  const absentStops = allStops.filter((s) => s.status === '不在');
 
   const openHandoffChoice = () => {
     if (!nextStop) return;
     setModalVisible(true);
   };
 
-  const finalizeCompletion = (photoUri?: string | null) => {
+  const finalizeCompletion = (photoUris: string[]) => {
     if (!nextStop) return;
-    onFinalizeStop(nextStop, '完了', photoUri ?? null);
+    onFinalizeStop(nextStop, '完了', photoUris);
     setModalVisible(false);
-    showToast(photoUri ? '✅ 完了・📍位置と📷写真を記録' : '✅ 完了・📍位置を記録');
+    showToast(photoUris.length > 0 ? '✅ 完了・📍位置と📷写真を記録' : '✅ 完了・📍位置を記録');
+  };
+
+  const handleRedispatch = (stop: Stop) => {
+    onRedispatch(stop);
+    showToast('🔁 再配達の準備をしました（未処理に戻りました）');
   };
 
   const handleAbsent = () => {
@@ -229,13 +238,35 @@ export default function DeliveryScreen({
             ))}
           </>
         ) : null}
+
+        {absentStops.length > 0 ? (
+          <>
+            <Text style={styles.listLabel}>不在（{absentStops.length}件・再配達可能）</Text>
+            {absentStops.map((s) => (
+              <View style={styles.absentRow} key={s.seq}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.stopAddr}>
+                    {s.ward}
+                    {s.town}
+                    {s.banchi}
+                  </Text>
+                  <Text style={styles.absentRowSub}>{recipientLabel(s.recipient)}</Text>
+                </View>
+                <Pressable style={styles.redispatchBtn} onPress={() => handleRedispatch(s)}>
+                  <Ionicons name="refresh" size={14} color={colors.brandDark} />
+                  <Text style={styles.redispatchBtnText}>再配達</Text>
+                </Pressable>
+              </View>
+            ))}
+          </>
+        ) : null}
       </ScrollView>
 
       <CompletionModal
         visible={modalVisible}
         stop={nextStop}
-        onSelectHandoff={() => finalizeCompletion(null)}
-        onConfirmDropoff={(photoUri) => finalizeCompletion(photoUri)}
+        onSelectHandoff={() => finalizeCompletion([])}
+        onConfirmDropoff={finalizeCompletion}
         onCancel={() => setModalVisible(false)}
       />
     </View>
@@ -447,4 +478,29 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   stopWinPillText: { color: colors.brandDark, fontWeight: '700', fontSize: 10.5 },
+
+  absentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: colors.absentSoft,
+    borderWidth: 1,
+    borderColor: colors.absent,
+    borderRadius: radius.md,
+    padding: 12,
+    marginBottom: 8,
+  },
+  absentRowSub: { fontSize: 11.5, color: colors.soft, marginTop: 2 },
+  redispatchBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.brand,
+    borderRadius: radius.pill,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+  },
+  redispatchBtnText: { color: colors.brandDark, fontWeight: '800', fontSize: 12.5 },
 });

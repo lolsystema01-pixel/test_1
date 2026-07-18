@@ -38,6 +38,24 @@
 - **一時エラー**: キューに積んで自動再送するので、楽観更新の「済」表示はそのまま維持する
   （サイレント・ユーザー操作を妨げない）。
 
+## 日内再訪（不在→再配達・LOL確定2026-07-18）
+
+`DeliveryScreen` に「不在（再配達可能）」リストを追加。`不在`のstopに「再配達」ボタンを押すと、
+そのstopをローカルで`未処理`に戻し（`App.tsx` `handleRedispatch`）、再度スワイプ完了/不在をタップできる。
+
+- LIVEモード: `record_delivery_result` は不在からの再処理を許可する（サーバ側は `不在→配送中→完了/不在`
+  の2遷移で記録し直す＝`delivery_result_v0` 側の設計）。写真を撮っていた場合は、再配達開始時に
+  `clear_delivery_photos` rpc（`src/lib/photoQueue.ts` `clearDeliveryPhotos`）で旧写真を消してから
+  新規3枠で撮り直す（ベストエフォート・失敗しても再配達自体はブロックしない）。
+- DEMOモード: ローカルのstatus巻き戻しのみで完結する（Supabase接続なし）。
+
+## 置き配写真（POD・最大3枚）
+
+`CompletionModal` の置き配フローで最大3枚まで撮影できる（`PHOTO_SLOTS`）。0枚でも完了できる（撮影必須ではない）。
+LIVEモードでは `src/lib/photoQueue.ts` の `submitDeliveryPhoto(trackingNumber, driverId, seq, localUri)` が
+1枚ずつ Storage アップロード（パス: `{driverId}/{trackingNumber}/{seq}.jpg`）→ `attach_delivery_photo` rpc
+の順で送信し、取りこぼし分は `trackingNumber+seq` 単位でキュー（AsyncStorage）に積んで自動再送する。
+
 ## LIVEモードの前提（DBスキーマ）
 
 `deliveries` テーブルに **`recipient_name` 列が存在すること**（`src/lib/deliveries.ts` の

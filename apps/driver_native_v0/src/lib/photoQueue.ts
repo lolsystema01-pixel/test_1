@@ -7,11 +7,17 @@ import { supabase } from './supabase';
 
 // 置き配写真(POD)の取りこぼし防止キュー。queue.ts（完了/不在の記録）と対になる存在だが、
 // 完了記録とは独立して動く：①Storageへのアップロード → ②attach_delivery_photo rpc で
-// delivery_results.photo_path に紐付け、の2段階のいずれで失敗しても AsyncStorage に積んで
+// delivery_photos に紐付け、の2段階のいずれで失敗しても AsyncStorage に積んで
 // 次回のforeground復帰・次アクション時に再送する。
 //
 // 「完了/不在」の記録自体は写真の成否に関わらず成立させる（設計書§10.5・撮影は必須にしない）。
 // 置き配写真が無い場合はこのキューに何も積まれない（呼び出し側で分岐）。
+//
+// 【2026-07-18 LOL確定＋監査MED-3対応】1配達につき最大3枚（seq=1〜3）。パスは
+// `${driverId}/${trackingNumber}/${seq}.jpg`（2階層）。★キューのdequeue/enqueueキーは
+// 旧版の trackingNumber単独ではなく trackingNumber+seq の複合にした（同一配達の複数枚を
+// 別々に積む必要があるため。単独キーのままだと後発の2枚目enqueueが1枚目の保留を
+// 上書きして消してしまうバグになる）。
 //
 // エラーコードの扱いは queue.ts と非対称にしている点に注意：
 //   attach_delivery_photo の P0002（対象 delivery_results 行が無い）は、
@@ -25,9 +31,10 @@ const BUCKET = 'delivery-photos';
 
 export interface PendingPhoto {
   trackingNumber: string;
+  seq: number; // 1〜3
   driverId: string;
   localUri: string; // launchCameraAsync が返すローカルファイルURI
-  path: string; // `${driverId}/${trackingNumber}.jpg`（Storageの保存先）
+  path: string; // `${driverId}/${trackingNumber}/${seq}.jpg`（Storageの保存先）
   uploaded: boolean; // Storageアップロードまで完了済みか（attach待ちのみ残る状態を区別）
   at: string; // 記録試行時刻（ISO・診断用）
 }
@@ -56,13 +63,22 @@ async function writeQueue(items: PendingPhoto[]): Promise<void> {
 
 async function enqueue(item: PendingPhoto): Promise<void> {
   const items = await readQueue();
-  // 同一問合番号の古い保留は最新のもので上書き（二重送信を防ぐ）
-  const next = items.filter((i) => i.trackingNumber !== item.trackingNumber);
+  // 同一問合番号×同一seqの古い保留は最新のもので上書き（二重送信を防ぐ・他seqは残す）
+  const next = items.filter((i) => !(i.trackingNumber === item.trackingNumber && i.seq === item.seq));
   next.push(item);
   await writeQueue(next);
 }
 
-async function dequeue(trackingNumber: string): Promise<void> {
+async function dequeue(trackingNumber: string, seq: number): Promise<void> {
+  const items = await readQueue();
+  const next = items.filter((i) => !(i.trackingNumber === trackingNumber && i.seq === seq));
+  if (next.length !== items.length) await writeQueue(next);
+}
+
+// 日内再訪（再配達）の起点でローカルの保留写真キューを掃除する。clear_delivery_photos で
+// サーバ側の旧写真を消した直後に、古い試行の保留写真（例: 通信断で送れずキューに残っていた
+// 1回目訪問時の写真）が新しい試行の枠に紛れ込んで誤ってattachされることを防ぐ。
+export async function clearPendingPhotoQueue(trackingNumber: string): Promise<void> {
   const items = await readQueue();
   const next = items.filter((i) => i.trackingNumber !== trackingNumber);
   if (next.length !== items.length) await writeQueue(next);
@@ -180,6 +196,7 @@ async function attachPhoto(item: PendingPhoto): Promise<'ok' | 'permanent' | 're
   try {
     const { error } = await supabase.rpc('attach_delivery_photo', {
       p_tracking_number: item.trackingNumber,
+      p_seq: item.seq,
       p_photo_path: item.path,
     });
     if (!error) return 'ok'; // recorded/already いずれも成功扱い
@@ -203,26 +220,29 @@ async function attemptSend(item: PendingPhoto): Promise<{ status: 'ok' | 'perman
 }
 
 // 置き配写真の記録本体：即時送信を試み、失敗（一時エラー）ならキューへ積んで次回に回す。
+// seq は1〜3（1配達につき最大3枚。CompletionModal の撮影スロット順）。
 export async function submitDeliveryPhoto(
   trackingNumber: string,
   driverId: string,
+  seq: number,
   localUri: string
 ): Promise<PhotoOutcome> {
   const item: PendingPhoto = {
     trackingNumber,
+    seq,
     driverId,
     localUri,
-    path: `${driverId}/${trackingNumber}.jpg`,
+    path: `${driverId}/${trackingNumber}/${seq}.jpg`,
     uploaded: false,
     at: new Date().toISOString(),
   };
   const { status, uploaded } = await attemptSend(item);
   if (status === 'ok') {
-    await dequeue(trackingNumber);
+    await dequeue(trackingNumber, seq);
     return { outcome: 'ok' };
   }
   if (status === 'permanent') {
-    await dequeue(trackingNumber);
+    await dequeue(trackingNumber, seq);
     return { outcome: 'permanent', message: '写真を記録できませんでした' };
   }
   await enqueue({ ...item, uploaded });
@@ -241,7 +261,7 @@ export async function flushPhotoQueue(): Promise<void> {
     for (const item of items) {
       const { status, uploaded } = await attemptSend(item);
       if (status === 'ok' || status === 'permanent') {
-        await dequeue(item.trackingNumber);
+        await dequeue(item.trackingNumber, item.seq);
       } else if (uploaded !== item.uploaded) {
         await enqueue({ ...item, uploaded });
       }
@@ -249,6 +269,22 @@ export async function flushPhotoQueue(): Promise<void> {
   } finally {
     flushInFlight = false;
   }
+}
+
+// 日内再訪（不在→再配達）の起点で呼ぶ：サーバ側の旧写真（delivery_photos行＋Storageオブジェクト）を
+// clear_delivery_photos で消し、ローカルの保留写真キューも掃除して「新規3枠」にする。
+// ベストエフォート：RPC失敗（オフライン等）でもローカルのクリアは行い、再配達自体は続行できるようにする
+// （サーバ側の旧オブジェクトが残っていても、次のattach時にP0001等で顕在化する程度に留める＝
+// 「再配達を全面ブロックしない」というMVPの命綱を優先）。
+export async function clearDeliveryPhotos(trackingNumber: string): Promise<void> {
+  if (supabase) {
+    try {
+      await supabase.rpc('clear_delivery_photos', { p_tracking_number: trackingNumber });
+    } catch {
+      // オフライン等。サーバ側のクリアは次回オンライン時に手動で気づく他ない（README既知の制約）。
+    }
+  }
+  await clearPendingPhotoQueue(trackingNumber);
 }
 
 // アプリforeground復帰時に自動フラッシュ。戻り値のクリーンアップ関数でリスナー解除。

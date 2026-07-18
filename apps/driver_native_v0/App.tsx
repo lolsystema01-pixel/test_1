@@ -14,7 +14,7 @@ import { isLiveMode, supabase } from './src/lib/supabase';
 import { resolveDriverIdentity } from './src/lib/authProfile';
 import { fetchTodayRoute } from './src/lib/deliveries';
 import { recordDeliveryResult, startQueueAutoFlush } from './src/lib/queue';
-import { submitDeliveryPhoto, startPhotoQueueAutoFlush } from './src/lib/photoQueue';
+import { submitDeliveryPhoto, startPhotoQueueAutoFlush, clearDeliveryPhotos } from './src/lib/photoQueue';
 import { getCurrentCoords } from './src/lib/location';
 
 import TabBar from './src/components/TabBar';
@@ -181,18 +181,18 @@ function AppInner() {
     showToast('🏁 お疲れさまでした');
   };
 
-  const handleFinalizeStop = (stop: Stop, status: StopStatus, photoUri?: string | null) => {
+  const handleFinalizeStop = (stop: Stop, status: StopStatus, photoUris?: string[]) => {
     // 楽観更新：押した瞬間にローカルを済にする（LIVEモードの送信は裏で行う）
     setStops((prev) => prev.map((s) => (s.trackingNumber === stop.trackingNumber ? { ...s, status } : s)));
 
     if (!isLiveMode || (status !== '完了' && status !== '不在')) return;
-    void submitDeliveryResult(stop.trackingNumber, status, photoUri ?? null);
+    void submitDeliveryResult(stop.trackingNumber, status, photoUris ?? []);
   };
 
   const submitDeliveryResult = async (
     trackingNumber: string,
     status: '完了' | '不在',
-    photoUri: string | null
+    photoUris: string[]
   ) => {
     const coords = await getCurrentCoords(); // 拒否/失敗/5秒タイムアウトでも null で続行
     const outcome = await recordDeliveryResult(trackingNumber, status, coords?.lat ?? null, coords?.lng ?? null);
@@ -207,16 +207,30 @@ function AppInner() {
     }
     // 'ok' は既存のトースト（完了/不在タップ時）でカバー済み。'queued' はサイレント（自動再送）。
 
-    // 置き配写真：完了記録の成否（ok/queued いずれも）と独立して試みる。
+    // 置き配写真：完了記録の成否（ok/queued いずれも）と独立して試みる（最大3枚・seq=1〜3）。
     // 失敗しても完了自体は既に成立しているため、ここでのエラーは画面のstatusを巻き戻さない
     // （写真はキューに積まれて自動再送される。§10.5「完了は写真の成否と独立」）。
-    if (!photoUri || !driverInfo) return;
-    void submitDeliveryPhoto(trackingNumber, driverInfo.driverId, photoUri).then((photoOutcome) => {
-      if (photoOutcome.outcome === 'permanent') {
-        showToast(`⚠️ ${photoOutcome.message ?? '写真を記録できませんでした'}`);
-      }
-      // 'ok'/'queued' はサイレント（完了時のトーストで既にカバー・自動再送に任せる）。
+    if (photoUris.length === 0 || !driverInfo) return;
+    photoUris.slice(0, 3).forEach((uri, index) => {
+      const seq = index + 1;
+      void submitDeliveryPhoto(trackingNumber, driverInfo.driverId, seq, uri).then((photoOutcome) => {
+        if (photoOutcome.outcome === 'permanent') {
+          showToast(`⚠️ ${photoOutcome.message ?? '写真を記録できませんでした'}（${seq}枚目）`);
+        }
+        // 'ok'/'queued' はサイレント（完了時のトーストで既にカバー・自動再送に任せる）。
+      });
     });
+  };
+
+  // 日内再訪（LOL確定2026-07-18）：不在の荷物を未処理に戻し、再度タップできるようにする。
+  // LIVEモードでは旧写真（delivery_photos行＋Storageオブジェクト）もクリアして「新規3枠」にする
+  // （clear_delivery_photosは対象が現在「不在」の時のみ許可＝サーバ側の安全装置）。
+  const handleRedispatch = (stop: Stop) => {
+    setStops((prev) =>
+      prev.map((s) => (s.trackingNumber === stop.trackingNumber ? { ...s, status: '未処理' } : s))
+    );
+    if (!isLiveMode) return;
+    void clearDeliveryPhotos(stop.trackingNumber);
   };
 
   const handleSignOut = async () => {
@@ -278,6 +292,7 @@ function AppInner() {
         allStops={stops}
         counts={counts}
         onFinalizeStop={handleFinalizeStop}
+        onRedispatch={handleRedispatch}
         showToast={showToast}
       />
     );
