@@ -17,9 +17,16 @@ interface SupabaseExtra {
 
 const extra = (Constants.expoConfig?.extra ?? {}) as SupabaseExtra;
 
-const supabaseUrl = extra.supabaseUrl && extra.supabaseUrl.trim() ? extra.supabaseUrl.trim() : null;
-const supabaseAnonKey =
-  extra.supabaseAnonKey && extra.supabaseAnonKey.trim() ? extra.supabaseAnonKey.trim() : null;
+// 設定注入の境界＝信用できない。string以外（null/undefined/数値/オブジェクト等）が来ても
+// 決して .trim() で落とさず、静かに null＝DEMOモードへ落とす（「デモが壊れない」原則）。
+const readConfigString = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const supabaseUrl = readConfigString(extra.supabaseUrl);
+const supabaseAnonKey = readConfigString(extra.supabaseAnonKey);
 
 export const isLiveMode = Boolean(supabaseUrl && supabaseAnonKey);
 
