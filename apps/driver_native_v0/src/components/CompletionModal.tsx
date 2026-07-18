@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, radius, shadow } from '../theme';
 import { Stop } from '../types';
@@ -10,32 +11,56 @@ interface Props {
   visible: boolean;
   stop: Stop | null;
   onSelectHandoff: () => void;
-  onSelectDropoff: () => void;
-  onConfirmPhoto: () => void;
+  // 置き配確定：写真を撮っていれば localUri・撮っていなければ null（撮影は必須にしない）
+  onConfirmDropoff: (photoUri: string | null) => void;
   onCancel: () => void;
 }
+
+// 撮影ガイド文言（要件8.5）：置き配写真は「荷物と置き場所」の証跡。プライバシーに配慮する。
+const PHOTO_GUIDE = '荷物と置き場所が分かるように撮影してください。人物・車のナンバー・室内は写さないでください。';
 
 export default function CompletionModal({
   visible,
   stop,
   onSelectHandoff,
-  onSelectDropoff,
-  onConfirmPhoto,
+  onConfirmDropoff,
   onCancel,
 }: Props) {
   const [step, setStep] = useState<Step>('choice');
-  const [captured, setCaptured] = useState(false);
+  const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [permissionDenied, setPermissionDenied] = useState(false);
 
   useEffect(() => {
     if (visible) {
       setStep('choice');
-      setCaptured(false);
+      setPhotoUri(null);
+      setPermissionDenied(false);
     }
   }, [visible]);
 
   const handleDropoff = () => {
     setStep('photo');
-    onSelectDropoff();
+  };
+
+  const handleTakePhoto = async () => {
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (permission.status !== 'granted') {
+        setPermissionDenied(true);
+        return;
+      }
+      setPermissionDenied(false);
+      const result = await ImagePicker.launchCameraAsync({ quality: 0.4 });
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        setPhotoUri(result.assets[0].uri);
+      }
+    } catch {
+      // カメラ起動自体の失敗も静かに無視する（撮影必須にしない＝「写真なしで完了」に進める）
+    }
+  };
+
+  const handleConfirm = () => {
+    onConfirmDropoff(photoUri);
   };
 
   return (
@@ -82,25 +107,37 @@ export default function CompletionModal({
           </>
         ) : (
           <>
-            <Text style={styles.title}>置き配写真を撮影（モック）</Text>
+            <Text style={styles.title}>置き配写真を撮影</Text>
+            <Text style={styles.photoGuide}>{PHOTO_GUIDE}</Text>
+
             <Pressable
-              style={[styles.photoBox, captured && styles.photoBoxCaptured]}
-              onPress={() => setCaptured(true)}
+              style={[styles.photoBox, photoUri && styles.photoBoxCaptured]}
+              onPress={handleTakePhoto}
             >
-              <Ionicons
-                name={captured ? 'checkmark-circle' : 'camera-outline'}
-                size={40}
-                color={captured ? colors.done : colors.faint}
-              />
-              <Text style={[styles.photoText, captured && { color: colors.done }]}>
-                {captured ? '撮影しました（モック）' : 'タップして撮影（モック）'}
-              </Text>
+              {photoUri ? (
+                <>
+                  <Image source={{ uri: photoUri }} style={styles.photoPreview} resizeMode="cover" />
+                  <View style={styles.retakeBadge}>
+                    <Ionicons name="camera-reverse-outline" size={14} color={colors.white} />
+                    <Text style={styles.retakeBadgeText}>タップで撮り直す</Text>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <Ionicons name="camera-outline" size={40} color={colors.faint} />
+                  <Text style={styles.photoText}>タップして撮影</Text>
+                </>
+              )}
             </Pressable>
-            <Text style={styles.note}>
-              ※プロトタイプにつき実際のカメラは使用しません
-            </Text>
-            <Pressable style={styles.confirmBtn} onPress={onConfirmPhoto}>
-              <Text style={styles.confirmText}>確定して次へ</Text>
+
+            {permissionDenied ? (
+              <Text style={styles.note}>
+                カメラの権限が許可されていません。「写真なしで完了」で先に進められます。
+              </Text>
+            ) : null}
+
+            <Pressable style={styles.confirmBtn} onPress={handleConfirm}>
+              <Text style={styles.confirmText}>{photoUri ? '確定して次へ' : '写真なしで完了'}</Text>
             </Pressable>
           </>
         )}
@@ -180,8 +217,16 @@ const styles = StyleSheet.create({
     color: colors.faint,
     marginTop: 2,
   },
+  photoGuide: {
+    fontSize: 12,
+    color: colors.soft,
+    textAlign: 'center',
+    lineHeight: 17,
+    marginTop: 4,
+    marginBottom: 4,
+  },
   photoBox: {
-    marginTop: 18,
+    marginTop: 14,
     height: 160,
     borderRadius: radius.lg,
     borderWidth: 1.5,
@@ -191,11 +236,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
+    overflow: 'hidden',
   },
   photoBoxCaptured: {
     backgroundColor: colors.doneSoft,
     borderColor: colors.done,
     borderStyle: 'solid',
+  },
+  photoPreview: {
+    width: '100%',
+    height: '100%',
+  },
+  retakeBadge: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(10,14,20,0.6)',
+    borderRadius: radius.pill,
+    paddingVertical: 4,
+    paddingHorizontal: 9,
+  },
+  retakeBadgeText: {
+    color: colors.white,
+    fontSize: 10.5,
+    fontWeight: '700',
   },
   photoText: {
     fontSize: 13,

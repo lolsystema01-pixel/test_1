@@ -14,6 +14,7 @@ import { isLiveMode, supabase } from './src/lib/supabase';
 import { resolveDriverIdentity } from './src/lib/authProfile';
 import { fetchTodayRoute } from './src/lib/deliveries';
 import { recordDeliveryResult, startQueueAutoFlush } from './src/lib/queue';
+import { submitDeliveryPhoto, startPhotoQueueAutoFlush } from './src/lib/photoQueue';
 import { getCurrentCoords } from './src/lib/location';
 
 import TabBar from './src/components/TabBar';
@@ -143,6 +144,12 @@ function AppInner() {
     return startQueueAutoFlush();
   }, []);
 
+  // --- 置き配写真POD の取りこぼし防止キューの自動再送（完了/不在キューとは独立） ---
+  useEffect(() => {
+    if (!isLiveMode) return;
+    return startPhotoQueueAutoFlush();
+  }, []);
+
   const counts: Counts = useMemo(() => {
     const total = stops.length;
     const done = stops.filter((s) => s.status === '完了').length;
@@ -174,15 +181,19 @@ function AppInner() {
     showToast('🏁 お疲れさまでした');
   };
 
-  const handleFinalizeStop = (stop: Stop, status: StopStatus) => {
+  const handleFinalizeStop = (stop: Stop, status: StopStatus, photoUri?: string | null) => {
     // 楽観更新：押した瞬間にローカルを済にする（LIVEモードの送信は裏で行う）
     setStops((prev) => prev.map((s) => (s.trackingNumber === stop.trackingNumber ? { ...s, status } : s)));
 
     if (!isLiveMode || (status !== '完了' && status !== '不在')) return;
-    void submitDeliveryResult(stop.trackingNumber, status);
+    void submitDeliveryResult(stop.trackingNumber, status, photoUri ?? null);
   };
 
-  const submitDeliveryResult = async (trackingNumber: string, status: '完了' | '不在') => {
+  const submitDeliveryResult = async (
+    trackingNumber: string,
+    status: '完了' | '不在',
+    photoUri: string | null
+  ) => {
     const coords = await getCurrentCoords(); // 拒否/失敗/5秒タイムアウトでも null で続行
     const outcome = await recordDeliveryResult(trackingNumber, status, coords?.lat ?? null, coords?.lng ?? null);
     // 方針: 恒久エラー(42501/23514/P0002)＝サーバに記録されない → 画面（楽観更新）も未処理へ巻き戻す。
@@ -192,8 +203,20 @@ function AppInner() {
         prev.map((s) => (s.trackingNumber === trackingNumber ? { ...s, status: '未処理' } : s))
       );
       showToast(`⚠️ ${outcome.message ?? '記録に失敗しました'}`);
+      return; // 完了自体が成立しなかった＝写真も紐付ける対象が無いので送らない
     }
     // 'ok' は既存のトースト（完了/不在タップ時）でカバー済み。'queued' はサイレント（自動再送）。
+
+    // 置き配写真：完了記録の成否（ok/queued いずれも）と独立して試みる。
+    // 失敗しても完了自体は既に成立しているため、ここでのエラーは画面のstatusを巻き戻さない
+    // （写真はキューに積まれて自動再送される。§10.5「完了は写真の成否と独立」）。
+    if (!photoUri || !driverInfo) return;
+    void submitDeliveryPhoto(trackingNumber, driverInfo.driverId, photoUri).then((photoOutcome) => {
+      if (photoOutcome.outcome === 'permanent') {
+        showToast(`⚠️ ${photoOutcome.message ?? '写真を記録できませんでした'}`);
+      }
+      // 'ok'/'queued' はサイレント（完了時のトーストで既にカバー・自動再送に任せる）。
+    });
   };
 
   const handleSignOut = async () => {

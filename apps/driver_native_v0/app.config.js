@@ -14,6 +14,9 @@ module.exports = {
     userInterfaceStyle: 'light',
     ios: {
       supportsTablet: true,
+      infoPlist: {
+        NSCameraUsageDescription: '置き配写真（配達の証跡）を撮影するためにカメラを使用します。',
+      },
     },
     android: {
       adaptiveIcon: {
@@ -27,6 +30,14 @@ module.exports = {
     web: {
       favicon: './assets/favicon.png',
     },
+    plugins: [
+      [
+        'expo-image-picker',
+        {
+          cameraPermission: '置き配写真（配達の証跡）を撮影するためにカメラを使用します。',
+        },
+      ],
+    ],
     extra: {
       supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL ?? null,
       supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? null,

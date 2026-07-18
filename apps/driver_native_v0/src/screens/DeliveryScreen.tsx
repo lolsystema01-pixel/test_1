@@ -12,7 +12,7 @@ interface Props {
   upcoming: Stop[];
   allStops: Stop[];
   counts: Counts;
-  onFinalizeStop: (stop: Stop, status: StopStatus) => void;
+  onFinalizeStop: (stop: Stop, status: StopStatus, photoUri?: string | null) => void;
   showToast: (message: string) => void;
 }
 
@@ -32,11 +32,11 @@ export default function DeliveryScreen({
     setModalVisible(true);
   };
 
-  const finalizeCompletion = () => {
+  const finalizeCompletion = (photoUri?: string | null) => {
     if (!nextStop) return;
-    onFinalizeStop(nextStop, '完了');
+    onFinalizeStop(nextStop, '完了', photoUri ?? null);
     setModalVisible(false);
-    showToast('✅ 完了・📍位置を記録');
+    showToast(photoUri ? '✅ 完了・📍位置と📷写真を記録' : '✅ 完了・📍位置を記録');
   };
 
   const handleAbsent = () => {
@@ -234,11 +234,8 @@ export default function DeliveryScreen({
       <CompletionModal
         visible={modalVisible}
         stop={nextStop}
-        onSelectHandoff={finalizeCompletion}
-        onSelectDropoff={() => {
-          /* モーダル内で撮影ステップへ遷移。確定は onConfirmPhoto で行う */
-        }}
-        onConfirmPhoto={finalizeCompletion}
+        onSelectHandoff={() => finalizeCompletion(null)}
+        onConfirmDropoff={(photoUri) => finalizeCompletion(photoUri)}
         onCancel={() => setModalVisible(false)}
       />
     </View>
