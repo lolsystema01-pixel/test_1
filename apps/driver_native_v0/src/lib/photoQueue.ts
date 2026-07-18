@@ -1,5 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState, AppStateStatus } from 'react-native';
+// legacy API（readAsStringAsync）を使用。expo-file-system v19(SDK54)は新API(File/Directory)が
+// メインエントリになったため、旧来の文字列読み取り関数は '/legacy' サブパスに移動している。
+import * as FileSystem from 'expo-file-system/legacy';
 import { supabase } from './supabase';
 
 // 置き配写真(POD)の取りこぼし防止キュー。queue.ts（完了/不在の記録）と対になる存在だが、
@@ -86,20 +89,89 @@ function isAlreadyExistsError(error: unknown): boolean {
   return false;
 }
 
+// base64文字→6bit値のルックアップ（atob非依存の自前デコード用）
+const BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+const BASE64_LOOKUP: Record<string, number> = {};
+for (let i = 0; i < BASE64_CHARS.length; i++) BASE64_LOOKUP[BASE64_CHARS[i]] = i;
+
+// base64文字列 → Uint8Array。React NativeのHermesにatobが無い環境があるため、
+// グローバルのatob/Bufferに頼らず手書きでデコードする（依存追加もしない）。
+function base64ToUint8Array(base64: string): Uint8Array {
+  const clean = base64.replace(/[\r\n]/g, '');
+  const len = clean.length;
+  if (len === 0 || len % 4 !== 0) return new Uint8Array(0);
+  let padding = 0;
+  if (clean.endsWith('==')) padding = 2;
+  else if (clean.endsWith('=')) padding = 1;
+  const outLen = (len / 4) * 3 - padding;
+  const bytes = new Uint8Array(outLen);
+  let p = 0;
+  for (let i = 0; i < len; i += 4) {
+    const c0 = clean[i];
+    const c1 = clean[i + 1];
+    const c2 = clean[i + 2];
+    const c3 = clean[i + 3];
+    const e1 = BASE64_LOOKUP[c0] ?? 0;
+    const e2 = BASE64_LOOKUP[c1] ?? 0;
+    const e3 = c2 === '=' ? 0 : BASE64_LOOKUP[c2] ?? 0;
+    const e4 = c3 === '=' ? 0 : BASE64_LOOKUP[c3] ?? 0;
+    const triple = (e1 << 18) | (e2 << 12) | (e3 << 6) | e4;
+    if (p < outLen) bytes[p++] = (triple >> 16) & 0xff;
+    if (p < outLen) bytes[p++] = (triple >> 8) & 0xff;
+    if (p < outLen) bytes[p++] = triple & 0xff;
+  }
+  return bytes;
+}
+
+// ローカルファイルURIの拡張子からMIMEタイプを決める。delivery-photosバケットの
+// allowed_mime_types（image/jpeg・image/jpg・image/png）に合わせ、不明な拡張子は
+// launchCameraAsync の既定であるJPEGとして扱う。
+function contentTypeFromUri(uri: string): string {
+  const match = /\.([a-zA-Z0-9]+)(?:\?.*)?$/.exec(uri);
+  const ext = match ? match[1].toLowerCase() : '';
+  if (ext === 'png') return 'image/png';
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  return 'image/jpeg'; // 既定（quality指定のlaunchCameraAsyncは通常jpg）
+}
+
+// Storageアップロードの恒久エラー判定：サイズ超過・MIME拒否・権限エラー等は
+// 再送しても直らないため恒久扱いにしてキューから除去する。@supabase/storage-jsの
+// StorageApiError は status(number)・statusCode(string) の両方を持ち得るためどちらも見る。
+const PERMANENT_STORAGE_STATUS = new Set([400, 403, 413, 415]);
+const PERMANENT_STORAGE_MESSAGE_PATTERN =
+  /size|too large|payload|mime type|not allowed|invalid|permission|forbidden/i;
+
+function isPermanentStorageError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const e = error as { status?: unknown; statusCode?: unknown; message?: unknown };
+  if (typeof e.status === 'number' && PERMANENT_STORAGE_STATUS.has(e.status)) return true;
+  if (typeof e.statusCode === 'string') {
+    const n = Number(e.statusCode);
+    if (Number.isFinite(n) && PERMANENT_STORAGE_STATUS.has(n)) return true;
+  }
+  if (typeof e.message === 'string' && PERMANENT_STORAGE_MESSAGE_PATTERN.test(e.message)) return true;
+  return false;
+}
+
+// RNの fetch(localUri).blob() は既知の不具合として0バイトのBlobを生成することがある
+// （特にAndroidのfile://URIで顕著）。これを避けるため expo-file-system で直接
+// base64文字列としてファイル本体を読み、自前デコードでArrayBuffer化してからアップロードする。
 async function uploadPhoto(item: PendingPhoto): Promise<'ok' | 'permanent' | 'retry'> {
   if (!supabase) return 'retry';
   try {
-    const res = await fetch(item.localUri);
-    const blob = await res.blob();
-    const { error } = await supabase.storage.from(BUCKET).upload(item.path, blob, {
-      contentType: 'image/jpeg',
+    const base64 = await FileSystem.readAsStringAsync(item.localUri, { encoding: 'base64' });
+    const bytes = base64ToUint8Array(base64);
+    if (bytes.length === 0) return 'retry'; // 読み取り自体が空＝一時的な失敗として再送
+    const { error } = await supabase.storage.from(BUCKET).upload(item.path, bytes, {
+      contentType: contentTypeFromUri(item.localUri),
       upsert: false, // あえて上書きしない（証跡の後日差し替え防止。README参照）
     });
     if (!error) return 'ok';
     if (isAlreadyExistsError(error)) return 'ok'; // 前回試行が実は成功していたとみなす
+    if (isPermanentStorageError(error)) return 'permanent'; // サイズ超過・MIME拒否・権限エラー等は再送しても直らない
     return 'retry'; // ネットワーク断・一時的なサーバエラー等
   } catch {
-    return 'retry';
+    return 'retry'; // ファイル読み取り失敗（ローカルURI消失等）も含め一時扱いで再送
   }
 }
 
