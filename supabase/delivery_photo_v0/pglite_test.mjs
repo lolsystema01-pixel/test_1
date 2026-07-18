@@ -1,9 +1,11 @@
-// pglite E2E: 置き配写真POD v0（delivery_results.photo_path ＋ 記録口 attach_delivery_photo）。
+// pglite E2E: 置き配写真POD v0（delivery_photos表 ＋ 記録口 attach_delivery_photo／clear_delivery_photos）。
 //   storage.objects は pgliteに（Supabase Storage実装が）無いため、storage.buckets/storage.objects/
 //   storage.foldername は「delivery_photo_v0.sql の全文がそのままエラー無く適用できる」ことの確認
 //   に必要な最小スタブのみ用意する（auth_rls_remaining_v1/pglite_test_storage.mjs と同方式）。
 //   Storageポリシーの実効性（実際のオブジェクトへのINSERT/SELECT拒否）はここでは検証しない
-//   ＝ rpc（attach_delivery_photo）と column（photo_path）部分のみを本テストの対象とする。
+//   ＝ rpc（attach_delivery_photo／clear_delivery_photos）と delivery_photos テーブル部分のみを対象とする。
+//   clear_delivery_photos の storage.objects DELETEは、テスト内で直接INSERTした行（実アップロードの
+//   代役）に対してSQLレベルのDELETEが効くことのみ確認する（実バックエンドの実体削除は範囲外＝README参照）。
 // 実行: node supabase/delivery_photo_v0/pglite_test.mjs
 import { PGlite } from '../../node_modules/@electric-sql/pglite/dist/index.js';
 import { readFileSync } from 'node:fs';
@@ -113,14 +115,17 @@ await db.exec(`
     ('${DRV1}',     'driver',  'D01', 'A01', 'DRV001', null),
     ('${DRV2}',     'driver',  'D01', 'A01', 'DRV002', null);
 
-  -- 9000帯12桁（本モジュール専用レンジ 900000000401〜404・他モジュールと非衝突）
-  -- status='仕分済' で投入し、record_delivery_result 経由で完了化する（delivery_results 行を
-  -- 正規のパスで作らないと photo_path attach の前提行が無いため）。
+  -- 9000帯12桁（本モジュール専用レンジ 900000000401〜408・他モジュールと非衝突）
+  -- status='仕分済' で投入し、record_delivery_result 経由で目的のstatusにする（delivery_results 行を
+  -- 正規のパスで作らないと photo attach の前提行が無いため）。
   insert into public.deliveries (tracking_number, office_code, driver_id, shipper_id, status) values
-    ('900000000401','A01','DRV001','SHIP01','仕分済'),  -- T1系: DRV001所有・写真attach対象
-    ('900000000402','A01','DRV002','SHIP01','仕分済'),  -- T4: DRV002所有（DRV001が触れない）
-    ('900000000403','A01','DRV001','SHIP01','仕分済'),  -- T5: パス接頭辞違反の対象
-    ('900000000404','A01','DRV001','SHIP01','仕分済');  -- T7: 非driverロール拒否の対象
+    ('900000000401','A01','DRV001','SHIP01','仕分済'),  -- T1系: DRV001所有・写真attach対象（→完了）
+    ('900000000402','A01','DRV002','SHIP01','仕分済'),  -- T4: DRV002所有（DRV001が触れない）（→完了）
+    ('900000000403','A01','DRV001','SHIP01','仕分済'),  -- T5: パス厳密一致違反の対象（→完了）
+    ('900000000404','A01','DRV001','SHIP01','仕分済'),  -- T7: 非driverロール拒否の対象（→完了）
+    ('900000000406','A01','DRV001','SHIP01','仕分済'),  -- T-clear系: DRV001所有（→不在。clear_delivery_photos）
+    ('900000000407','A01','DRV002','SHIP01','仕分済'),  -- T-clear系: DRV002所有（→不在。他人拒否の対象）
+    ('900000000408','A01','DRV001','SHIP01','仕分済');  -- T-clear系: DRV001所有（→完了。status不一致拒否の対象）
   -- 900000000405 は意図的に deliveries/delivery_results どちらにも作らない（T8: 未存在）
 
   -- storage スキーマの最小スタブ（delivery_photo_v0.sql の全文適用を通すためだけの最小限。
@@ -144,7 +149,7 @@ await db.exec(readFileSync(new URL('../status_log_v0/status_log_v0.sql', import.
 await db.exec(readFileSync(new URL('../status_log_v0/record_status_transition_v0.sql', import.meta.url), 'utf8'));
 await db.exec(readFileSync(new URL('../delivery_result_v0/delivery_result_v0.sql', import.meta.url), 'utf8'));
 
-// delivery_photo_v0.sql: ⑤の確認クエリ（pg_policies等）は末尾に含まれるが postgres専用の情報照会でしかない
+// delivery_photo_v0.sql: ⑥の確認クエリ（pg_policies等）は末尾に含まれるが postgres専用の情報照会でしかない
 // ため、そのまま流してもpgliteで害はない（結果は捨てる）。全文が例外なく適用できることを確認する。
 let applyOk = true;
 try {
@@ -155,22 +160,45 @@ try {
 }
 ok('delivery_photo_v0.sql が例外なく適用できる（Storageスタブ込み）', applyOk);
 
-console.log('\n[0. スキーマ確認：photo_path列・Storageポリシー2件]');
+console.log('\n[0. スキーマ確認：旧photo_path列が消えている・delivery_photos表＋RLS・Storageポリシー2件]');
 {
-  const col = await db.query(
-    `select data_type from information_schema.columns where table_schema='public' and table_name='delivery_results' and column_name='photo_path'`
+  const oldCol = await db.query(
+    `select count(*)::int n from information_schema.columns where table_schema='public' and table_name='delivery_results' and column_name='photo_path'`
   );
-  ok('delivery_results.photo_path 列が存在する（text）', col.rows.length === 1 && col.rows[0].data_type === 'text');
+  ok('旧 delivery_results.photo_path 列は残っていない（0）', oldCol.rows[0].n === 0);
+
+  const cols = await db.query(
+    `select column_name from information_schema.columns where table_schema='public' and table_name='delivery_photos' order by ordinal_position`
+  );
+  const colNames = cols.rows.map((r) => r.column_name);
+  ok(
+    'delivery_photos 表に想定の列がある',
+    ['id', 'result_id', 'tracking_number', 'driver_id', 'seq', 'photo_path', 'recorded_at', 'created_by'].every((c) =>
+      colNames.includes(c)
+    )
+  );
+
+  const tablePol = await db.query(
+    `select policyname, cmd from pg_policies where schemaname='public' and tablename='delivery_photos'`
+  );
+  ok('delivery_photos のRLSポリシーは1件（SELECTのみ）', tablePol.rows.length === 1 && tablePol.rows[0].cmd === 'SELECT');
+
   const pol = await db.query(
     `select policyname from pg_policies where schemaname='storage' and tablename='objects' and policyname in ('delivery_photos_insert','delivery_photos_select')`
   );
   ok('Storageポリシーが2件（insert/select）登録されている', pol.rows.length === 2);
 }
 
-const call = (tn, path) => db.query(`select public.attach_delivery_photo($1,$2) r`, [tn, path]);
-const photoOf = async (tn) =>
-  (await db.query(`select photo_path from public.delivery_results where tracking_number=$1 order by id desc limit 1`, [tn])).rows[0]
-    ?.photo_path;
+const call = (tn, seq, path) => db.query(`select public.attach_delivery_photo($1,$2,$3) r`, [tn, seq, path]);
+const clear = (tn) => db.query(`select public.clear_delivery_photos($1) r`, [tn]);
+const photosOf = async (tn) =>
+  (await db.query(`select seq, photo_path from public.delivery_photos where tracking_number=$1 order by seq`, [tn])).rows;
+const objectCount = async (prefix) =>
+  (
+    await db.query(`select count(*)::int n from storage.objects where bucket_id='delivery-photos' and name like $1`, [
+      prefix + '%',
+    ])
+  ).rows[0].n;
 
 // まず DRV001/DRV002 として record_delivery_result 経由で delivery_results 行を作る
 // （attach_delivery_photo は delivery_results 行の存在＋所有者一致が前提のため）
@@ -178,84 +206,177 @@ await asUser(DRV1, async () => {
   await db.query(`select public.record_delivery_result($1,'完了')`, ['900000000401']);
   await db.query(`select public.record_delivery_result($1,'完了')`, ['900000000403']);
   await db.query(`select public.record_delivery_result($1,'完了')`, ['900000000404']);
+  await db.query(`select public.record_delivery_result($1,'不在')`, ['900000000406']);
+  await db.query(`select public.record_delivery_result($1,'完了')`, ['900000000408']);
 }, { commit: true });
 await asUser(DRV2, async () => {
   await db.query(`select public.record_delivery_result($1,'完了')`, ['900000000402']);
+  await db.query(`select public.record_delivery_result($1,'不在')`, ['900000000407']);
 }, { commit: true });
 
-console.log('\n[1. 本人紐付けOK：DRV001が自分のフォルダ配下のパスをattach → recorded]');
+console.log('\n[1. 本人紐付けOK：DRV001が自分のフォルダ配下・厳密一致のパスをattach（seq=1,2,3） → recorded]');
 await asUser(DRV1, async () => {
-  const r = (await call('900000000401', 'DRV001/900000000401.jpg')).rows[0].r;
-  ok('result=recorded', r.result === 'recorded');
-  ok('photo_path が返り値に含まれる', r.photo_path === 'DRV001/900000000401.jpg');
+  const r1 = (await call('900000000401', 1, 'DRV001/900000000401/1.jpg')).rows[0].r;
+  ok('seq=1 result=recorded', r1.result === 'recorded');
+  const r2 = (await call('900000000401', 2, 'DRV001/900000000401/2.jpg')).rows[0].r;
+  ok('seq=2 result=recorded', r2.result === 'recorded');
+  const r3 = (await call('900000000401', 3, 'DRV001/900000000401/3.jpg')).rows[0].r;
+  ok('seq=3 result=recorded', r3.result === 'recorded');
 }, { commit: true });
-ok('delivery_results.photo_path が保存されている', (await photoOf('900000000401')) === 'DRV001/900000000401.jpg');
+const photos401 = await photosOf('900000000401');
+ok('delivery_photos に3行（seq1〜3）保存されている', photos401.length === 3);
+ok('パスが期待どおり', photos401.every((p, i) => p.photo_path === `DRV001/900000000401/${i + 1}.jpg`));
 
-console.log('\n[2. 冪等：同一パスを再送 → already・値は変わらない]');
+console.log('\n[2. 冪等：同一seq×同一パスの再送 → already・値は変わらない]');
 await asUser(DRV1, async () => {
-  const r = (await call('900000000401', 'DRV001/900000000401.jpg')).rows[0].r;
+  const r = (await call('900000000401', 1, 'DRV001/900000000401/1.jpg')).rows[0].r;
   ok('result=already', r.result === 'already');
 }, { commit: true });
-ok('photo_path は変化しない', (await photoOf('900000000401')) === 'DRV001/900000000401.jpg');
+ok('delivery_photos は3行のまま（増えない）', (await photosOf('900000000401')).length === 3);
 
-console.log('\n[3. 既に別の写真がある行への上書きは拒否（23505ではない明示エラー）]');
+console.log('\n[3. 既に別の写真がある枠(seq)への上書きは拒否（P0001＝明示エラー・23505ではない）]');
+// 注: 通常のRPC経路ではパスが{driver_id}/{tracking_number}/{seq}.jpgに厳密決定される（MED-3対応）ため、
+//   「同一seqに異なるパスを渡す」こと自体がパス検証（42501）で先に弾かれ、この分岐には通常到達しない。
+//   ここでは「何らかの理由でズレたパスの行が既に存在する」データ不整合を想定した防御的分岐として、
+//   直接INSERT（postgres・RLSバイパス）で再現して検証する。
+await db.exec(`
+  insert into public.delivery_photos (result_id, tracking_number, driver_id, seq, photo_path, created_by)
+  select id, '900000000403', 'DRV001', 1, 'DRV001/900000000403/1_inconsistent.jpg', null
+  from public.delivery_results where tracking_number='900000000403' order by id desc limit 1;
+`);
 await asUser(DRV1, async () => {
-  await throwsCode('別パスでのattachは拒否される（P0001＝明示エラー・23505ではない）', 'P0001', () =>
-    call('900000000401', 'DRV001/900000000401_retake.jpg')
+  await throwsCode(
+    '既存行のパスが期待値と食い違う場合はattachを拒否（P0001・防御的分岐）',
+    'P0001',
+    () => call('900000000403', 1, 'DRV001/900000000403/1.jpg') // 期待どおりの正しいパスを渡しても、既存行と食い違うため拒否
   );
 });
-ok('photo_path は書き換わっていない（上書き防止）', (await photoOf('900000000401')) === 'DRV001/900000000401.jpg');
+ok(
+  '既存の（不整合な）pathは書き換わっていない（上書き防止）',
+  (await photosOf('900000000403')).find((p) => p.seq === 1)?.photo_path === 'DRV001/900000000403/1_inconsistent.jpg'
+);
+await db.exec(`delete from public.delivery_photos where tracking_number='900000000403' and seq=1;`); // 後続テストのため後始末
 
-console.log('\n[4. 他人拒否：DRV001がDRV002所有の delivery_results 行にattach → 42501]');
+console.log('\n[4. 枚数上限：seqは1〜3のみ（0や4は23514で拒否＝3枚を超える枠を作れない）]');
+await asUser(DRV1, async () => {
+  await throwsCode('seq=0は拒否', '23514', () => call('900000000401', 0, 'DRV001/900000000401/0.jpg'));
+});
+await asUser(DRV1, async () => {
+  await throwsCode('seq=4は拒否（最大3枚）', '23514', () => call('900000000401', 4, 'DRV001/900000000401/4.jpg'));
+});
+ok('delivery_photos は3行のまま', (await photosOf('900000000401')).length === 3);
+
+console.log('\n[5. 他人拒否：DRV001がDRV002所有の delivery_results 行にattach → 42501]');
 await asUser(DRV1, async () => {
   await throwsCode('DRV001 は DRV002 所有の実績にattachできない', '42501', () =>
-    call('900000000402', 'DRV001/900000000402.jpg')
+    call('900000000402', 1, 'DRV001/900000000402/1.jpg')
   );
 });
-ok('T4は未attachのまま（photo_path=null）', (await photoOf('900000000402')) == null);
+ok('T4は未attachのまま', (await photosOf('900000000402')).length === 0);
 
-console.log('\n[5. パス接頭辞検証：自分以外のフォルダ・ルート直下は拒否 → 42501]');
+console.log('\n[6. MED-3対応：パスは {driver_id}/{tracking_number}/{seq}.jpg に厳密一致（前方一致では不十分）]');
 await asUser(DRV1, async () => {
   await throwsCode('他人（DRV002）のフォルダを指すパスは拒否', '42501', () =>
-    call('900000000403', 'DRV002/900000000403.jpg')
+    call('900000000403', 1, 'DRV002/900000000403/1.jpg')
   );
 });
 await asUser(DRV1, async () => {
-  await throwsCode('ルート直下（フォルダ無し）のパスは拒否', '42501', () => call('900000000403', '900000000403.jpg'));
+  await throwsCode('ルート直下（フォルダ無し）のパスは拒否', '42501', () => call('900000000403', 1, '900000000403.jpg'));
 });
-ok('T5は未attachのまま（photo_path=null）', (await photoOf('900000000403')) == null);
-
-console.log('\n[6. 入力検証：300文字超のパスは拒否 → 23514]');
 await asUser(DRV1, async () => {
-  const longPath = 'DRV001/' + 'a'.repeat(300) + '.jpg';
-  await throwsCode('300文字超のパスは拒否', '23514', () => call('900000000403', longPath));
+  // ★MED-3の核心：driver_idは自分のものだが、別のtracking_numberフォルダを指すパス（使い回し／誤紐付け）は拒否
+  await throwsCode(
+    '★自分のフォルダだが別tracking_numberを指すパスは拒否（誤紐付け防止）',
+    '42501',
+    () => call('900000000403', 1, 'DRV001/900000000401/1.jpg') // 401は自分の別配達の実際のパス
+  );
 });
+await asUser(DRV1, async () => {
+  // ★seq偽装：パス内のseqとp_seq引数が食い違う場合も拒否
+  await throwsCode('★パス内seqと引数p_seqの不一致は拒否（seq偽装防止）', '42501', () =>
+    call('900000000403', 1, 'DRV001/900000000403/2.jpg')
+  );
+});
+ok('T5は未attachのまま', (await photosOf('900000000403')).length === 0);
 
 console.log('\n[7. 非driver拒否：area/hq/shipper/anon は attach_delivery_photo を呼べない → 42501]');
 await asUser(AREA_A1, async () => {
   await throwsCode('area は attach_delivery_photo を呼べない', '42501', () =>
-    call('900000000404', 'A01/x.jpg')
+    call('900000000404', 1, 'A01/900000000404/1.jpg')
   );
 });
 await asUser(HQ1, async () => {
-  await throwsCode('hq は attach_delivery_photo を呼べない', '42501', () => call('900000000404', 'x/x.jpg'));
+  await throwsCode('hq は attach_delivery_photo を呼べない', '42501', () => call('900000000404', 1, 'x/x/1.jpg'));
 });
 await asUser(SHIP1, async () => {
-  await throwsCode('shipper は attach_delivery_photo を呼べない', '42501', () => call('900000000404', 'x/x.jpg'));
+  await throwsCode('shipper は attach_delivery_photo を呼べない', '42501', () => call('900000000404', 1, 'x/x/1.jpg'));
 });
 await asAnon(async () => {
   await throwsCode('anon は attach_delivery_photo を呼べない（GRANT無し）', '42501', () =>
-    call('900000000404', 'x/x.jpg')
+    call('900000000404', 1, 'x/x/1.jpg')
   );
 });
-ok('T7は未attachのまま（photo_path=null）', (await photoOf('900000000404')) == null);
+ok('T7は未attachのまま', (await photosOf('900000000404')).length === 0);
 
 console.log('\n[8. delivery_results 未存在は拒否 → P0002]');
 await asUser(DRV1, async () => {
   await throwsCode('delivery_results 行が無い問合番号は拒否', 'P0002', () =>
-    call('900000000405', 'DRV001/900000000405.jpg')
+    call('900000000405', 1, 'DRV001/900000000405/1.jpg')
   );
 });
+
+console.log('\n[9. clear_delivery_photos：日内再訪（不在）時のみ許可・旧オブジェクト/行を削除して新規3枠にする]');
+// 実アップロードの代役として、対象パス＋紛らわしい別バケット風の名前を持つ行を直接投入しておく
+await db.exec(`
+  insert into storage.objects (bucket_id, name) values
+    ('delivery-photos','DRV001/900000000406/1.jpg'),
+    ('delivery-photos','DRV001/900000000406/2.jpg'),
+    ('delivery-photos','other-bucket/DRV001/900000000406/1.jpg');
+`);
+await asUser(DRV1, async () => {
+  const r1 = (await call('900000000406', 1, 'DRV001/900000000406/1.jpg')).rows[0].r;
+  ok('T-clear①：1枚目attach成功', r1.result === 'recorded');
+  const r2 = (await call('900000000406', 2, 'DRV001/900000000406/2.jpg')).rows[0].r;
+  ok('T-clear①：2枚目attach成功', r2.result === 'recorded');
+}, { commit: true });
+ok('clear前：delivery_photos 2行', (await photosOf('900000000406')).length === 2);
+ok('clear前：storage.objects に DRV001/900000000406/ 配下2件', (await objectCount('DRV001/900000000406/')) === 2);
+
+console.log('\n[9a. 安全装置：status=完了（不在ではない）の荷物へのclearは拒否]');
+await asUser(DRV1, async () => {
+  await throwsCode('完了状態のclearは拒否（不在からの再配達時のみ許可）', '42501', () => clear('900000000408'));
+});
+
+console.log('\n[9b. 他人拒否：DRV001がDRV002所有(不在)の写真をclearできない]');
+await asUser(DRV1, async () => {
+  await throwsCode('DRV001 は DRV002 所有の荷物をclearできない', '42501', () => clear('900000000407'));
+});
+
+console.log('\n[9c. 未存在拒否：存在しない問合番号のclearはP0002]');
+await asUser(DRV1, async () => {
+  await throwsCode('存在しない問合番号のclearはP0002', 'P0002', () => clear('900000000499'));
+});
+
+console.log('\n[9d. 本人・不在状態でのclear成功：旧オブジェクト（自バケット内一致分のみ）とdelivery_photos行が消える]');
+await asUser(DRV1, async () => {
+  const r = (await clear('900000000406')).rows[0].r;
+  ok('result=cleared', r.result === 'cleared');
+  ok('objects_deleted=2', r.objects_deleted === 2);
+  ok('rows_deleted=2', r.rows_deleted === 2);
+}, { commit: true });
+ok('clear後：delivery_photos 0行', (await photosOf('900000000406')).length === 0);
+ok('clear後：DRV001/900000000406/ 配下のstorage.objectsは0件', (await objectCount('DRV001/900000000406/')) === 0);
+ok(
+  '★別バケット風の紛らわしい名前(other-bucket/...)は消えずに残る（prefix一致のみ削除）',
+  (await objectCount('other-bucket/DRV001/900000000406/')) === 1
+);
+
+console.log('\n[9e. clear後：同じパスへの再attachが「新規3枠」として成功する（already/衝突にならない）]');
+await asUser(DRV1, async () => {
+  const r = (await call('900000000406', 1, 'DRV001/900000000406/1.jpg')).rows[0].r;
+  ok('★clear後の再attachはrecorded（旧行が本当に消えている証拠）', r.result === 'recorded');
+}, { commit: true });
+ok('delivery_photos 1行（再attach分のみ）', (await photosOf('900000000406')).length === 1);
 
 console.log(`\ndelivery_photo pglite: ${pass} passed, ${fail} failed`);
 await db.close();
