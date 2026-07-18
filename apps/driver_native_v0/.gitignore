@@ -30,7 +30,9 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
+# local env files（Supabase URL/anonキー等。.env.example のみコミット対象）
+.env
+.env.local
 .env*.local
 
 # typescript

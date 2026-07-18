@@ -1,6 +1,8 @@
 import { Stop } from './types';
 
-// ダミーデータ（UIプロトタイプ専用・Supabase接続なし）
+// ダミーデータ（DEMOモード専用・Supabase接続なし）。
+// LIVEモード（env設定あり）では使われず、src/lib/deliveries.ts の実データ取得に置き換わる
+// （env未設定時はこのモックにフォールバックし、従来のデモ動作をそのまま維持する）。
 // ドライバー: DRV001 谷川（営業所A01相当）。住所はモックアップ画像に合わせ世田谷系。
 export const DRIVER = {
   id: 'DRV001',

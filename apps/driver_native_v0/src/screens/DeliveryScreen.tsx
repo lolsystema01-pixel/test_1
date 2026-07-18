@@ -12,7 +12,7 @@ interface Props {
   upcoming: Stop[];
   allStops: Stop[];
   counts: Counts;
-  onFinalizeStop: (seq: number, status: StopStatus) => void;
+  onFinalizeStop: (stop: Stop, status: StopStatus) => void;
   showToast: (message: string) => void;
 }
 
@@ -34,14 +34,14 @@ export default function DeliveryScreen({
 
   const finalizeCompletion = () => {
     if (!nextStop) return;
-    onFinalizeStop(nextStop.seq, '完了');
+    onFinalizeStop(nextStop, '完了');
     setModalVisible(false);
     showToast('✅ 完了・📍位置を記録');
   };
 
   const handleAbsent = () => {
     if (!nextStop) return;
-    const seq = nextStop.seq;
+    const stop = nextStop;
     // 不在=当日終端（再配達はお客様の受付経由・本日中は不可＝最短翌日）をルールとして提示
     Alert.alert(
       '不在として記録します',
@@ -52,7 +52,7 @@ export default function DeliveryScreen({
           text: '不在で記録',
           style: 'destructive',
           onPress: () => {
-            onFinalizeStop(seq, '不在');
+            onFinalizeStop(stop, '不在');
             showToast('🚪 不在・📍位置を記録');
           },
         },
