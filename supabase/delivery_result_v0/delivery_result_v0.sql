@@ -100,16 +100,20 @@ begin
     raise exception 'この荷物の担当ではありません' using errcode = '42501';
   end if;
 
-  -- 冪等: 既に完了/不在なら何もしない（二度押し無害）
-  if v_status in ('完了','不在') then
+  -- 冪等: 既に完了なら何もしない（二度押し無害）。完了は終端のまま。
+  -- 不在は日内再訪（LOL確定2026-07-18）で再処理可＝ここでは早期returnしない（下の遷移へ進む）。
+  if v_status = '完了' then
     return jsonb_build_object('result','already','tracking_number',p_tracking_number,'status',v_status);
   end if;
 
-  -- 遷移: 仕分済なら配送中を自動経由（線形検証・ログは既存記録口に委譲）
-  if v_status = '仕分済' then
-    perform public.record_status_transition(p_tracking_number, '配送中', '配達', null);
+  -- 遷移: 仕分済（初回配達開始）または不在（日内再訪の再開）なら配送中を自動経由
+  --   （線形検証・ログは既存記録口の実体に委譲。record_status_transition_internal を直接呼ぶ＝
+  --    driverロールでも完了/不在に到達できるのは本関数からの内部呼び出しだけに限定するため
+  --    〔公開ラッパー record_status_transition のdriverガードは経由しない。MED-2対応・record_status_transition_v0.sql参照〕）。
+  if v_status in ('仕分済','不在') then
+    perform public.record_status_transition_internal(p_tracking_number, '配送中', '配達', null);
   end if;
-  perform public.record_status_transition(p_tracking_number, p_result, '配達', null);
+  perform public.record_status_transition_internal(p_tracking_number, p_result, '配達', null);
 
   insert into public.delivery_results (tracking_number, driver_id, result, lat, lng, created_by)
   values (p_tracking_number, v_driver, p_result, p_lat, p_lng, v_uid)
@@ -123,4 +127,5 @@ end $$;
 revoke execute on function public.record_delivery_result(text, text, double precision, double precision) from public;
 grant  execute on function public.record_delivery_result(text, text, double precision, double precision) to authenticated;
 comment on function public.record_delivery_result(text, text, double precision, double precision) is
-  '配達実績の記録口（8.11最小）。driver本人限定・冪等・仕分済→配送中→完了/不在を不可分に。SECURITY DEFINER';
+  '配達実績の記録口（8.11最小）。driver本人限定・冪等（完了は終端）・仕分済/不在→配送中→完了/不在を不可分に。'
+  '完了/不在への唯一の正規経路（record_status_transition_internal を直接呼ぶ＝MED-2対応）。SECURITY DEFINER';

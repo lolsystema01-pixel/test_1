@@ -131,7 +131,8 @@ await db.exec(`
     ('900000000210','A01', null,   'SHIP01','未配車'),  -- T9a: 未配車（担当なし）
     ('900000000211','A01','DRV001','SHIP01','配車済'),  -- T9b: 配車済（線形遷移外）
     ('900000000212','A01','DRV002','SHIP01','仕分済'),  -- T10a: RLS用（DRV002完了）
-    ('900000000213','C01','DRV003','SHIP01','仕分済');  -- T10b: RLS用（DRV003=C01完了）
+    ('900000000213','C01','DRV003','SHIP01','仕分済'),  -- T10b: RLS用（DRV003=C01完了）
+    ('900000000214','A01','DRV001','SHIP01','仕分済');  -- T11: 日内再訪（不在→再完了）
 `);
 
 // 依存記録口＋本体を適用
@@ -281,6 +282,46 @@ await asUser(SHIP1, async () => {
 await asAnon(async () => {
   await throwsCode('anon は delivery_results を読めない（GRANT無し）', '42501', () => db.query(`select count(*) from public.delivery_results`));
 });
+
+console.log('\n[11. 日内再訪（LOL確定2026-07-18）：不在の荷物に再度「完了」→ 冪等ガードに阻まれず2巡目として記録される]');
+await asUser(DRV1, async () => {
+  await call('900000000214', '不在', 35.0, 137.0);
+}, { commit: true });
+ok('1巡目：不在', (await statusOf('900000000214')) === '不在');
+await asUser(DRV1, async () => {
+  const r = (await call('900000000214', '完了', 35.01, 137.01)).rows[0].r;
+  ok('2巡目：result=recorded（不在からの再処理は冪等ガードに阻まれない）', r.result === 'recorded');
+}, { commit: true });
+ok('★2巡目後：status=完了', (await statusOf('900000000214')) === '完了');
+const logs11 = await logRows('900000000214');
+ok('ログ4行（仕分済→配送中→不在／不在→配送中→完了）', logs11.length === 4);
+ok('3行目 不在→配送中（日内再訪）', logs11[2].from_status === '不在' && logs11[2].to_status === '配送中');
+ok('4行目 配送中→完了', logs11[3].from_status === '配送中' && logs11[3].to_status === '完了');
+const rr11 = await resultRows('900000000214');
+ok('delivery_results 2行（1巡目=不在／2巡目=完了・履歴として両方残る）', rr11.length === 2);
+ok('1行目 result=不在', rr11[0].result === '不在');
+ok('2行目 result=完了', rr11[1].result === '完了');
+
+console.log('\n[12. 完了は引き続き終端：完了済みへの再処理は already・行が増えない]');
+await asUser(DRV1, async () => {
+  const r = (await call('900000000214', '不在')).rows[0].r;
+  ok('完了済みに再度呼んでも already（不在への巻き戻しはしない）', r.result === 'already' && r.status === '完了');
+}, { commit: true });
+const rr12 = await resultRows('900000000214');
+ok('delivery_results は2行のまま（増えない）', rr12.length === 2);
+
+console.log('\n[13. MED-2：driverが record_status_transition を直接呼んでも完了へは到達できない（record_delivery_result経由必須）]');
+await asUser(DRV1, async () => {
+  await throwsCode('driverのrecord_status_transition直接呼び出しは完了へ到達できない', '42501', () =>
+    db.query(`select public.record_status_transition($1,'完了','配達') r`, ['900000000206'])
+  );
+});
+ok('T6は仕分済のまま（迂回できない）', (await statusOf('900000000206')) === '仕分済');
+await asUser(DRV1, async () => {
+  const r = (await call('900000000206', '完了')).rows[0].r;
+  ok('record_delivery_result経由なら正規に完了できる（唯一の記録口として機能）', r.result === 'recorded');
+}, { commit: true });
+ok('T6はrecord_delivery_result経由で完了', (await statusOf('900000000206')) === '完了');
 
 console.log(`\ndelivery_result pglite: ${pass} passed, ${fail} failed`);
 await db.close();
