@@ -26,6 +26,7 @@ async function throwsCode(n, code, fn) {
 
 // --- ダミーUUID（正準規格 v1: 愛知A01/C01・DRV001-003・SHIP01 に対応）---
 const HQ1 = '00000000-0000-0000-0000-000000000001'; // hq
+const DEPOT_D1 = '00000000-0000-0000-0000-0000000000e1'; // depot D01（配下=A01）
 const AREA_A1 = '00000000-0000-0000-0000-0000000000a1'; // area A01
 const SHIP1 = '00000000-0000-0000-0000-0000000000f1'; // shipper SHIP01
 const DRV1 = '00000000-0000-0000-0000-0000000000d1'; // driver DRV001（A01）
@@ -72,7 +73,6 @@ await db.exec(`
   );
   create table public.offices (office_code text primary key, depot_code text);
   create table public.drivers (driver_id text primary key, office_code text);
-  -- 本番は rls_v0.sql が既に grant 済み（drivers は delivery_results の depot分岐で直接参照されるため必要）。
   grant select on public.drivers to authenticated;
 
   create or replace function public.my_role()   returns text language sql stable security definer as $$ select role from public.profiles where user_id=auth.uid() $$;
@@ -84,6 +84,14 @@ await db.exec(`
     select office_code from public.offices where depot_code = public.my_depot() $$;
   create or replace function public.my_office_drivers() returns setof text language sql stable security definer as $$
     select driver_id from public.drivers where office_code = public.my_office() $$;
+
+  -- rls_v0.sql と同じ形（GRANT＋RLS）を再現：drivers はhq/area/driver本人のみにSELECTポリシーがあり、
+  -- depot用ポリシーは無い（機微テーブルのため）。delivery_results のdepot分岐はこれを
+  -- my_depot_drivers()（SECURITY DEFINER）経由で跨ぐ＝直接参照だとdepotは常に0件になることの再現。
+  alter table public.drivers enable row level security;
+  create policy drivers_hq     on public.drivers for select to authenticated using ( public.my_role()='hq' );
+  create policy drivers_area   on public.drivers for select to authenticated using ( public.my_role()='area'   and office_code=public.my_office() );
+  create policy drivers_self   on public.drivers for select to authenticated using ( public.my_role()='driver' and driver_id=public.my_driver() );
 
   create table public.deliveries (
     tracking_number text primary key,
@@ -101,12 +109,13 @@ await db.exec(`
   insert into public.drivers (driver_id, office_code) values ('DRV001','A01'), ('DRV002','A01'), ('DRV003','C01');
 
   insert into public.profiles (user_id, role, depot_code, office_code, driver_id, shipper_id) values
-    ('${HQ1}',    'hq',      null,  null,  null,     null),
-    ('${AREA_A1}','area',    'D01', 'A01', null,     null),
-    ('${SHIP1}',  'shipper', null,  null,  null,     'SHIP01'),
-    ('${DRV1}',   'driver',  'D01', 'A01', 'DRV001', null),
-    ('${DRV2}',   'driver',  'D01', 'A01', 'DRV002', null),
-    ('${DRV3}',   'driver',  'D02', 'C01', 'DRV003', null);
+    ('${HQ1}',      'hq',      null,  null,  null,     null),
+    ('${DEPOT_D1}', 'depot',   'D01', null,  null,     null),
+    ('${AREA_A1}',  'area',    'D01', 'A01', null,     null),
+    ('${SHIP1}',    'shipper', null,  null,  null,     'SHIP01'),
+    ('${DRV1}',     'driver',  'D01', 'A01', 'DRV001', null),
+    ('${DRV2}',     'driver',  'D01', 'A01', 'DRV002', null),
+    ('${DRV3}',     'driver',  'D02', 'C01', 'DRV003', null);
 
   -- 9000帯12桁（dummy_data_standard_v1）。愛知A01/C01・SHIP01。
   insert into public.deliveries (tracking_number, office_code, driver_id, shipper_id, status) values
@@ -235,7 +244,7 @@ await asUser(DRV1, async () => {
 ok('T9aは未配車のまま', (await statusOf('900000000210')) === '未配車');
 ok('T9bは配車済のまま', (await statusOf('900000000211')) === '配車済');
 
-console.log('\n[10. RLS：delivery_results を hq=全件・area=自営業所分・driver=自分のみ・shipper=0件・anon=権限エラー]');
+console.log('\n[10. RLS：delivery_results を hq=全件・depot=配下営業所分・area=自営業所分・driver=自分のみ・shipper=0件・anon=権限エラー]');
 // RLS確認用の追加データ（DRV002＝A01／DRV003＝C01 でそれぞれ完了させる）
 await asUser(DRV2, async () => {
   await call('900000000212', '完了');
@@ -247,6 +256,15 @@ await asUser(DRV3, async () => {
 const countAll = async () => (await db.query(`select count(*)::int n from public.delivery_results`)).rows[0].n;
 await asUser(HQ1, async () => {
   ok('hq=全件7件', (await countAll()) === 7);
+});
+await asUser(DEPOT_D1, async () => {
+  // depot(D01)の配下は office A01 のみ（C01はD02所属）。修正前は drivers を直接参照しており
+  // drivers に depot 用RLSポリシーが無いため常に0件だった（my_depot_drivers() で解決）。
+  const n = await countAll();
+  ok('depot(D01)=配下営業所(A01)所属ドライバー分6件（DRV001×5＋DRV002×1）', n === 6);
+  const rows = (await db.query(`select distinct driver_id from public.delivery_results`)).rows.map((r) => r.driver_id);
+  ok('depot(D01)にDRV001/DRV002が含まれる', rows.includes('DRV001') && rows.includes('DRV002'));
+  ok('★depot(D01)からDRV003(C01/D02所属)の行は0件', !rows.includes('DRV003'));
 });
 await asUser(AREA_A1, async () => {
   const n = await countAll();

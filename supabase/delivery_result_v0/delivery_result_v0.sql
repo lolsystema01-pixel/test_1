@@ -21,6 +21,25 @@ comment on column public.delivery_results.lng is '位置情報（機微）: 同 
 create index if not exists idx_delivery_results_tracking on public.delivery_results (tracking_number);
 create index if not exists idx_delivery_results_driver_day on public.delivery_results (driver_id, recorded_at);
 
+-- 拠点配下の全ドライバーID（deliveries RLSのdepot分岐と同じ範囲をdrivers RLSを跨いで解決）
+-- ※ public.drivers はhq/area/driver本人のみにSELECTポリシーがあり depot分岐が無いため、
+--   ポリシー内で drivers を直接参照すると depot ロールは常に0件（fail-closed）になる。
+--   my_office_drivers() と同じ「RLSを跨ぐSECURITY DEFINERヘルパー」パターンで解決する。
+create or replace function public.my_depot_drivers()
+returns setof text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select driver_id from public.drivers
+  where office_code in (select public.my_depot_offices())
+$$;
+revoke all on function public.my_depot_drivers() from public;
+grant execute on function public.my_depot_drivers() to authenticated;
+comment on function public.my_depot_drivers() is
+  '拠点配下の全ドライバーID一覧（drivers のRLSを跨ぐ）。delivery_results のdepot可視範囲判定用';
+
 -- ② RLS（SELECTのみ・書込みポリシーは作らない） --------------------
 alter table public.delivery_results enable row level security;
 grant select on public.delivery_results to authenticated;
@@ -30,8 +49,7 @@ create policy delivery_results_select on public.delivery_results
   using (
     case public.my_role()
       when 'hq'     then true
-      when 'depot'  then driver_id in (select d.driver_id from public.drivers d
-                                        where d.office_code = any (select public.my_depot_offices()))
+      when 'depot'  then driver_id in (select public.my_depot_drivers())
       when 'area'   then driver_id = any (select public.my_office_drivers())
       when 'driver' then driver_id = public.my_driver()
       else false
@@ -69,8 +87,12 @@ begin
     raise exception '座標が不正です' using errcode = '23514';
   end if;
 
+  -- 二度押し/再送の並行実行対策（行ロック→敗者はalready）：
+  -- for update で行ロックし、並行呼び出しの敗者は勝者のcommitまで待機してから
+  -- 終端status（完了/不在）を読み、下の冪等ガードで already を返す。
   select d.status, d.driver_id into v_status, v_owner
-  from public.deliveries d where d.tracking_number = p_tracking_number;
+  from public.deliveries d where d.tracking_number = p_tracking_number
+  for update;
   if not found then
     raise exception '対象の荷物が見つかりません（問合番号=%）', p_tracking_number using errcode = 'P0002';
   end if;
