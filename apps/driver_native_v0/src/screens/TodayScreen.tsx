@@ -1,7 +1,7 @@
-import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, radius, shadow } from '../theme';
+import { colors, elevation, motion, radius, space, type } from '../theme';
 import { Counts } from '../types';
 
 interface Props {
@@ -41,154 +41,198 @@ export default function TodayScreen({
   const distance = (counts.processed * 0.8 + 5).toFixed(1);
   const duration = clockInTime ? formatElapsed(clockInTime, now) : '--';
 
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(anim, { toValue: 1, duration: motion.slow, useNativeDriver: true }).start();
+  }, [anim]);
+  const translateY = anim.interpolate({ inputRange: [0, 1], outputRange: [14, 0] });
+
   return (
     <ScrollView
       style={styles.body}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
     >
-      <View style={styles.iconCircle}>
-        <Ionicons name="checkmark-circle" size={44} color={colors.brand} />
-      </View>
-      <Text style={styles.title}>{title}</Text>
-      <Text style={styles.subtitle}>{subtitle}</Text>
-
-      <View style={styles.card}>
-        <StatRow
-          icon="checkmark-circle-outline"
-          iconColor={colors.done}
-          label="完了数"
-          value={`${counts.done} 件`}
-          valueColor={colors.done}
-        />
-        <Divider />
-        <StatRow
-          icon="person-outline"
-          iconColor={colors.absent}
-          label="不在数"
-          value={`${counts.absent} 件`}
-          valueColor={colors.absent}
-        />
-        <Divider />
-        <StatRow
-          icon="pie-chart-outline"
-          iconColor={colors.brand}
-          label="処理率"
-          value={`${counts.rate}%`}
-          valueColor={colors.brand}
-        />
-        <Divider />
-        <StatRow
-          icon="car-outline"
-          iconColor={colors.soft}
-          label="走行距離"
-          value={`${distance} km`}
-          valueColor={colors.ink}
-        />
-        <Divider />
-        <StatRow
-          icon="time-outline"
-          iconColor={colors.soft}
-          label="稼働時間"
-          value={duration}
-          valueColor={colors.ink}
-        />
-      </View>
-
-      {clockedOut ? (
-        <View style={[styles.clockOutBtn, styles.clockOutBtnDone]}>
-          <Ionicons name="checkmark" size={18} color={colors.soft} />
-          <Text style={styles.clockOutDoneText}>
-            退勤済み {clockOutTime ? formatClock(clockOutTime) : ''}
-          </Text>
+      <Animated.View style={{ opacity: anim, transform: [{ translateY }], width: '100%', alignItems: 'center' }}>
+        <View style={styles.iconCircle}>
+          <Ionicons name="checkmark-circle" size={44} color={colors.brand600} />
         </View>
-      ) : (
-        <Pressable style={styles.clockOutBtn} onPress={onClockOut}>
-          <Text style={styles.clockOutText}>退勤する</Text>
-        </Pressable>
-      )}
+        <Text style={styles.title}>{title}</Text>
+        <Text style={styles.subtitle}>{subtitle}</Text>
+
+        <View style={styles.grid}>
+          <MetricTile
+            icon="checkmark-circle-outline"
+            iconColor={colors.done700}
+            iconBg={colors.done100}
+            label="完了数"
+            value={String(counts.done)}
+            unit="件"
+          />
+          <MetricTile
+            icon="person-outline"
+            iconColor={colors.absent700}
+            iconBg={colors.absent100}
+            label="不在数"
+            value={String(counts.absent)}
+            unit="件"
+          />
+          <MetricTile
+            icon="pie-chart-outline"
+            iconColor={colors.brand700}
+            iconBg={colors.brand100}
+            label="処理率"
+            value={String(counts.rate)}
+            unit="%"
+          />
+          <MetricTile
+            icon="car-outline"
+            iconColor={colors.ink600}
+            iconBg={colors.ink50}
+            label="走行距離"
+            value={distance}
+            unit="km"
+          />
+        </View>
+
+        <View style={styles.durationCard}>
+          <View style={styles.durationLeft}>
+            <Ionicons name="time-outline" size={18} color={colors.ink500} />
+            <Text style={styles.durationLabel}>稼働時間</Text>
+          </View>
+          <Text style={styles.durationValue}>{duration}</Text>
+        </View>
+
+        {clockedOut ? (
+          <View style={[styles.clockOutBtn, styles.clockOutBtnDone]}>
+            <Ionicons name="checkmark" size={18} color={colors.ink500} />
+            <Text style={styles.clockOutDoneText}>
+              退勤済み {clockOutTime ? formatClock(clockOutTime) : ''}
+            </Text>
+          </View>
+        ) : (
+          <Pressable
+            style={({ pressed }) => [styles.clockOutBtn, pressed && styles.clockOutBtnPressed]}
+            onPress={onClockOut}
+          >
+            <Text style={styles.clockOutText}>退勤する</Text>
+          </Pressable>
+        )}
+      </Animated.View>
     </ScrollView>
   );
 }
 
-function StatRow({
+function MetricTile({
   icon,
   iconColor,
+  iconBg,
   label,
   value,
-  valueColor,
+  unit,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   iconColor: string;
+  iconBg: string;
   label: string;
   value: string;
-  valueColor: string;
+  unit: string;
 }) {
   return (
-    <View style={styles.row}>
-      <View style={styles.rowLeft}>
-        <Ionicons name={icon} size={18} color={iconColor} />
-        <Text style={styles.rowLabel}>{label}</Text>
+    <View style={styles.tile}>
+      <View style={[styles.tileIconCircle, { backgroundColor: iconBg }]}>
+        <Ionicons name={icon} size={17} color={iconColor} />
       </View>
-      <Text style={[styles.rowValue, { color: valueColor }]}>{value}</Text>
+      <View style={styles.tileValueRow}>
+        <Text style={styles.tileValue}>{value}</Text>
+        <Text style={styles.tileUnit}>{unit}</Text>
+      </View>
+      <Text style={styles.tileLabel}>{label}</Text>
     </View>
   );
 }
 
-function Divider() {
-  return <View style={styles.divider} />;
-}
-
 const styles = StyleSheet.create({
-  body: { flex: 1, backgroundColor: colors.bg },
-  content: { padding: 20, paddingTop: 32, paddingBottom: 32, alignItems: 'center' },
+  body: { flex: 1, backgroundColor: colors.paper },
+  content: { padding: space.lg, paddingTop: space.xxl, paddingBottom: space.xxl, alignItems: 'center' },
   iconCircle: {
     width: 84,
     height: 84,
     borderRadius: 42,
-    backgroundColor: colors.brandSoft,
+    backgroundColor: colors.brand050,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 16,
+    marginBottom: space.base,
   },
-  title: { fontSize: 20, fontWeight: '800', color: colors.ink },
-  subtitle: { fontSize: 13.5, color: colors.soft, marginTop: 6, marginBottom: 24 },
-  card: {
+  title: { ...type.h1, color: colors.ink900 },
+  subtitle: { ...type.body, color: colors.ink500, marginTop: space.xs, marginBottom: space.xl },
+
+  grid: {
     width: '100%',
-    backgroundColor: colors.card,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: space.sm,
+  },
+  tile: {
+    flexBasis: '48%',
+    flexGrow: 1,
+    backgroundColor: colors.surface,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.line,
-    paddingHorizontal: 16,
+    padding: space.md,
+    ...elevation.e1,
   },
-  row: {
+  tileIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: space.sm,
+  },
+  tileValueRow: { flexDirection: 'row', alignItems: 'baseline' },
+  tileValue: { ...type.display, fontSize: 28, lineHeight: 32, color: colors.ink900 },
+  tileUnit: { ...type.metric, fontSize: 13, color: colors.ink400, marginLeft: 2 },
+  tileLabel: { ...type.label, color: colors.ink500, marginTop: 2 },
+
+  durationCard: {
+    width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 14,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.line,
+    paddingVertical: space.md,
+    paddingHorizontal: space.base,
+    marginTop: space.sm,
   },
-  rowLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  rowLabel: { fontSize: 14, fontWeight: '700', color: colors.ink },
-  rowValue: { fontSize: 17, fontWeight: '800' },
-  divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.line },
+  durationLeft: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  durationLabel: { ...type.bodyStrong, color: colors.ink700 },
+  durationValue: { ...type.metric, fontSize: 17, color: colors.ink900 },
+
   clockOutBtn: {
     width: '100%',
-    backgroundColor: colors.brand,
+    minHeight: 60,
+    backgroundColor: colors.brand600,
     borderRadius: radius.lg,
-    paddingVertical: 17,
     alignItems: 'center',
-    marginTop: 26,
-    ...shadow.floating,
+    justifyContent: 'center',
+    marginTop: space.xl,
+    ...elevation.e3,
   },
+  clockOutBtnPressed: { opacity: 0.9, transform: [{ scale: 0.99 }] },
   clockOutText: { color: colors.white, fontSize: 16, fontWeight: '800' },
   clockOutBtnDone: {
-    backgroundColor: colors.bg,
+    backgroundColor: colors.paper,
     borderWidth: 1,
     borderColor: colors.line,
     flexDirection: 'row',
-    gap: 8,
+    gap: space.sm,
     shadowOpacity: 0,
     elevation: 0,
   },
-  clockOutDoneText: { color: colors.soft, fontSize: 14, fontWeight: '700' },
+  clockOutDoneText: { ...type.bodyStrong, color: colors.ink500 },
 });

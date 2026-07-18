@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, Text } from 'react-native';
-import { colors, radius } from '../theme';
+import { colors, elevation, radius, space, type } from '../theme';
 import { ToastState } from '../types';
 
 interface Props {
@@ -48,24 +48,20 @@ export default function Toast({ toast }: Props) {
 const styles = StyleSheet.create({
   toast: {
     position: 'absolute',
-    left: 24,
-    right: 24,
+    left: space.xl,
+    right: space.xl,
     bottom: 92,
     alignSelf: 'center',
-    backgroundColor: '#111318',
+    backgroundColor: colors.ink900,
     borderRadius: radius.md,
-    paddingVertical: 12,
-    paddingHorizontal: 18,
+    paddingVertical: space.md,
+    paddingHorizontal: space.lg,
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.35,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 8,
+    ...elevation.e3,
   },
   text: {
+    ...type.bodyStrong,
     color: colors.white,
     fontSize: 13,
-    fontWeight: '700',
   },
 });

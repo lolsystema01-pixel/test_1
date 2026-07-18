@@ -1,5 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Animated,
+  Pressable,
+  StyleProp,
+  StyleSheet,
+  Text,
+  View,
+  ViewStyle,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import {
   SafeAreaProvider,
@@ -7,7 +16,7 @@ import {
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
 
-import { colors } from './src/theme';
+import { colors, elevation, motion, radius, space, type } from './src/theme';
 import { Counts, Stop, StopStatus, TabKey, ToastState } from './src/types';
 import { DRIVER, generateStops } from './src/mockData';
 import { isLiveMode, supabase } from './src/lib/supabase';
@@ -302,7 +311,9 @@ function AppInner() {
     <View style={styles.root}>
       <StatusBar style="dark" />
       <SafeAreaView style={styles.safeTop} edges={['top']}>
-        <View style={styles.flexFill}>{content}</View>
+        <ScreenFade screenKey={`${authStatus}|${routeLoaded}|${clockedIn}|${activeTab}`} style={styles.flexFill}>
+          {content}
+        </ScreenFade>
       </SafeAreaView>
       {showChrome ? (
         <View style={{ paddingBottom: insets.bottom > 0 ? insets.bottom - 8 : 0 }}>
@@ -315,10 +326,30 @@ function AppInner() {
   );
 }
 
+// 画面切替の軽いフェード（見た目のみ・状態機械の分岐には一切関与しない演出用ラッパー）。
+// screenKeyが変わるたびに0→1へフェードインする。
+function ScreenFade({
+  screenKey,
+  style,
+  children,
+}: {
+  screenKey: string;
+  style?: StyleProp<ViewStyle>;
+  children: React.ReactNode;
+}) {
+  const fade = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    fade.setValue(0);
+    Animated.timing(fade, { toValue: 1, duration: motion.base, useNativeDriver: true }).start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screenKey]);
+  return <Animated.View style={[style, { opacity: fade }]}>{children}</Animated.View>;
+}
+
 function CenteredMessage({ label, showSpinner }: { label: string; showSpinner?: boolean }) {
   return (
     <View style={styles.centered}>
-      {showSpinner ? <ActivityIndicator color={colors.brand} style={{ marginBottom: 12 }} /> : null}
+      {showSpinner ? <ActivityIndicator color={colors.brand600} style={{ marginBottom: space.md }} /> : null}
       <Text style={styles.centeredText}>{label}</Text>
     </View>
   );
@@ -332,7 +363,10 @@ function UnauthorizedScreen({ onSignOut }: { onSignOut: () => void }) {
         このアカウントはドライバーとして登録されていません。{'\n'}
         管理者に連絡してドライバー登録（役割・ドライバーID）を確認してください。
       </Text>
-      <Pressable style={styles.signOutBtn} onPress={onSignOut}>
+      <Pressable
+        style={({ pressed }) => [styles.signOutBtn, pressed && styles.pressedSubtle]}
+        onPress={onSignOut}
+      >
         <Text style={styles.signOutBtnText}>別のアカウントでログインし直す</Text>
       </Pressable>
     </View>
@@ -348,10 +382,16 @@ function AuthErrorScreen({ onRetry, onSignOut }: { onRetry: () => void; onSignOu
         ログイン状態の確認中に通信エラーが発生しました。{'\n'}
         電波状況をご確認のうえ、もう一度お試しください。
       </Text>
-      <Pressable style={styles.retryBtn} onPress={onRetry}>
+      <Pressable
+        style={({ pressed }) => [styles.retryBtn, pressed && styles.retryBtnPressed]}
+        onPress={onRetry}
+      >
         <Text style={styles.retryBtnText}>再試行</Text>
       </Pressable>
-      <Pressable style={styles.signOutBtn} onPress={onSignOut}>
+      <Pressable
+        style={({ pressed }) => [styles.signOutBtn, pressed && styles.pressedSubtle]}
+        onPress={onSignOut}
+      >
         <Text style={styles.signOutBtnText}>ログアウト</Text>
       </Pressable>
     </View>
@@ -376,42 +416,51 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.bg },
-  safeTop: { flex: 1, backgroundColor: colors.card },
+  root: { flex: 1, backgroundColor: colors.paper },
+  safeTop: { flex: 1, backgroundColor: colors.surface },
   flexFill: { flex: 1 },
+  pressedSubtle: { opacity: 0.6 },
   centered: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 32,
-    backgroundColor: colors.bg,
+    paddingHorizontal: space.xxl,
+    backgroundColor: colors.paper,
   },
-  centeredTitle: { fontSize: 18, fontWeight: '800', color: colors.ink, marginBottom: 10 },
-  centeredText: { fontSize: 13.5, color: colors.soft, textAlign: 'center', lineHeight: 20 },
+  centeredTitle: { ...type.h2, color: colors.ink900, marginBottom: space.sm },
+  centeredText: { ...type.body, color: colors.ink500, textAlign: 'center', lineHeight: 20 },
   signOutBtn: {
-    marginTop: 22,
+    marginTop: space.xl,
+    minHeight: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: colors.brand,
-    borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 18,
+    borderColor: colors.brand600,
+    borderRadius: radius.lg,
+    paddingVertical: space.md,
+    paddingHorizontal: space.lg,
   },
-  signOutBtnText: { color: colors.brand, fontWeight: '800', fontSize: 13.5 },
+  signOutBtnText: { ...type.bodyStrong, color: colors.brand600 },
   retryBtn: {
-    marginTop: 22,
-    backgroundColor: colors.brand,
-    borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 22,
+    marginTop: space.xl,
+    minHeight: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.brand600,
+    borderRadius: radius.lg,
+    paddingVertical: space.md,
+    paddingHorizontal: space.xl,
+    ...elevation.e2,
   },
+  retryBtnPressed: { opacity: 0.9 },
   retryBtnText: { color: colors.white, fontWeight: '800', fontSize: 13.5 },
   modeBadge: {
     position: 'absolute',
-    right: 10,
-    backgroundColor: 'rgba(17,19,24,0.72)',
-    borderRadius: 999,
+    right: space.sm,
+    backgroundColor: 'rgba(14,17,22,0.78)',
+    borderRadius: radius.pill,
     paddingVertical: 3,
-    paddingHorizontal: 9,
+    paddingHorizontal: space.sm,
   },
-  modeBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+  modeBadgeText: { ...type.overline, fontSize: 9.5, color: colors.white },
 });

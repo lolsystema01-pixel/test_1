@@ -1,7 +1,7 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors } from '../theme';
+import { colors, radius, space, type } from '../theme';
 import { TabKey } from '../types';
 
 interface TabDef {
@@ -26,16 +26,18 @@ export default function TabBar({ active, onChange }: Props) {
     <View style={styles.bar}>
       {TABS.map((tab) => {
         const isOn = active === tab.key;
-        const tintColor = isOn ? colors.brand : colors.faint;
+        const tintColor = isOn ? colors.brand600 : colors.ink400;
         return (
           <Pressable
             key={tab.key}
-            style={styles.tab}
+            style={({ pressed }) => [styles.tab, pressed && styles.tabPressed]}
             onPress={() => onChange(tab.key)}
             hitSlop={6}
           >
-            <Ionicons name={tab.icon} size={22} color={tintColor} />
-            <Text style={[styles.label, { color: tintColor }]}>{tab.label}</Text>
+            <View style={[styles.iconWrap, isOn && styles.iconWrapOn]}>
+              <Ionicons name={tab.icon} size={21} color={tintColor} />
+            </View>
+            <Text style={[styles.label, { color: tintColor }, isOn && styles.labelOn]}>{tab.label}</Text>
           </Pressable>
         );
       })}
@@ -46,20 +48,34 @@ export default function TabBar({ active, onChange }: Props) {
 const styles = StyleSheet.create({
   bar: {
     flexDirection: 'row',
-    backgroundColor: colors.card,
+    backgroundColor: colors.surface,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.line,
-    paddingTop: 8,
-    paddingBottom: 10,
+    borderTopColor: colors.hairline,
+    paddingTop: space.sm,
+    paddingBottom: space.sm,
   },
   tab: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 3,
+    gap: 2,
+  },
+  tabPressed: { opacity: 0.6 },
+  iconWrap: {
+    width: 40,
+    height: 26,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconWrapOn: {
+    backgroundColor: colors.brand050,
   },
   label: {
+    ...type.caption,
     fontSize: 10.5,
-    fontWeight: '700',
+  },
+  labelOn: {
+    fontWeight: '800',
   },
 });

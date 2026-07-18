@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { Animated, PanResponder, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, radius } from '../theme';
+import { colors, elevation, radius, type } from '../theme';
 
 const HANDLE_SIZE = 46;
 const TRACK_PADDING = 4;
@@ -98,7 +98,9 @@ const styles = StyleSheet.create({
   track: {
     height: HANDLE_SIZE + TRACK_PADDING * 2,
     borderRadius: radius.pill,
-    backgroundColor: colors.doneSoft,
+    backgroundColor: colors.done100,
+    borderWidth: 1,
+    borderColor: colors.done500,
     justifyContent: 'center',
     overflow: 'hidden',
     position: 'relative',
@@ -117,9 +119,9 @@ const styles = StyleSheet.create({
   label: {
     position: 'absolute',
     alignSelf: 'center',
+    ...type.bodyStrong,
     fontSize: 14,
-    fontWeight: '800',
-    color: colors.done,
+    color: colors.done700,
   },
   handle: {
     position: 'absolute',
@@ -130,10 +132,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.done,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
+    ...elevation.e2,
   },
 });

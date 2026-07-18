@@ -11,7 +11,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { colors, radius, shadow } from '../theme';
+import { colors, elevation, radius, space, type } from '../theme';
 import { supabase } from '../lib/supabase';
 
 interface Props {
@@ -49,7 +49,7 @@ export default function LoginScreen({ showToast }: Props) {
     <KeyboardAvoidingView style={styles.body} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.iconCircle}>
-          <MaterialCommunityIcons name="truck-outline" size={38} color={colors.brand} />
+          <MaterialCommunityIcons name="truck-outline" size={38} color={colors.brand600} />
         </View>
 
         <Text style={styles.title}>ドライバーログイン</Text>
@@ -65,7 +65,7 @@ export default function LoginScreen({ showToast }: Props) {
             autoCorrect={false}
             keyboardType="email-address"
             placeholder="you@example.com"
-            placeholderTextColor={colors.faint}
+            placeholderTextColor={colors.ink300}
           />
         </View>
 
@@ -77,18 +77,22 @@ export default function LoginScreen({ showToast }: Props) {
             onChangeText={setPassword}
             secureTextEntry
             placeholder="••••••••"
-            placeholderTextColor={colors.faint}
+            placeholderTextColor={colors.ink300}
           />
         </View>
 
         {errorMessage ? (
           <View style={styles.errorBox}>
-            <Ionicons name="alert-circle-outline" size={16} color={colors.absent} />
+            <Ionicons name="alert-circle-outline" size={16} color={colors.danger600} />
             <Text style={styles.errorText}>{errorMessage}</Text>
           </View>
         ) : null}
 
-        <Pressable style={styles.loginBtn} onPress={handleLogin} disabled={submitting}>
+        <Pressable
+          style={({ pressed }) => [styles.loginBtn, pressed && styles.loginBtnPressed]}
+          onPress={handleLogin}
+          disabled={submitting}
+        >
           {submitting ? (
             <ActivityIndicator color={colors.white} />
           ) : (
@@ -105,66 +109,69 @@ export default function LoginScreen({ showToast }: Props) {
 }
 
 const styles = StyleSheet.create({
-  body: { flex: 1, backgroundColor: colors.bg },
+  body: { flex: 1, backgroundColor: colors.paper },
   content: {
     flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 28,
-    paddingVertical: 40,
+    paddingHorizontal: space.xl,
+    paddingVertical: space.huge,
   },
   iconCircle: {
     width: 92,
     height: 92,
     borderRadius: 46,
-    backgroundColor: colors.brandSoft,
+    backgroundColor: colors.brand050,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 22,
+    marginBottom: space.lg,
   },
-  title: { fontSize: 20, fontWeight: '800', color: colors.ink },
+  title: { ...type.h1, color: colors.ink900 },
   subtitle: {
-    fontSize: 13,
-    color: colors.soft,
-    marginTop: 8,
-    marginBottom: 26,
+    ...type.body,
+    color: colors.ink500,
+    marginTop: space.sm,
+    marginBottom: space.xl,
     textAlign: 'center',
   },
-  field: { width: '100%', marginBottom: 14 },
-  label: { fontSize: 12, fontWeight: '700', color: colors.soft, marginBottom: 6 },
+  field: { width: '100%', marginBottom: space.md },
+  label: { ...type.label, color: colors.ink500, marginBottom: space.xs },
   input: {
     width: '100%',
+    minHeight: 48,
     borderWidth: 1,
     borderColor: colors.line,
     borderRadius: radius.md,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
     fontSize: 15,
-    color: colors.ink,
-    backgroundColor: colors.card,
+    color: colors.ink900,
+    backgroundColor: colors.surface,
   },
   errorBox: {
     flexDirection: 'row',
-    gap: 6,
+    gap: space.sm,
     alignItems: 'flex-start',
-    backgroundColor: '#FBEAEA',
+    backgroundColor: colors.danger100,
     borderWidth: 1,
-    borderColor: '#F0C6C6',
+    borderColor: colors.danger600,
     borderRadius: radius.sm,
-    padding: 10,
-    marginTop: 4,
-    marginBottom: 8,
+    padding: space.sm,
+    marginTop: space.xs,
+    marginBottom: space.sm,
     width: '100%',
   },
-  errorText: { flex: 1, fontSize: 12.5, color: colors.absent, fontWeight: '700', lineHeight: 18 },
+  errorText: { flex: 1, ...type.caption, color: colors.danger600, lineHeight: 18 },
   loginBtn: {
     width: '100%',
-    backgroundColor: colors.brand,
+    minHeight: 56,
+    backgroundColor: colors.brand600,
     borderRadius: radius.lg,
-    paddingVertical: 16,
     alignItems: 'center',
-    marginTop: 10,
-    ...shadow.floating,
+    justifyContent: 'center',
+    marginTop: space.sm,
+    ...elevation.e3,
   },
+  loginBtnPressed: { opacity: 0.9, transform: [{ scale: 0.99 }] },
   loginBtnText: { color: colors.white, fontSize: 16, fontWeight: '800' },
 });

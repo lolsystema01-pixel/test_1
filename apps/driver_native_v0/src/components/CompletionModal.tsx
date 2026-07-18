@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, radius, shadow } from '../theme';
+import { colors, elevation, radius, space, type } from '../theme';
 import { Stop } from '../types';
 
 type Step = 'choice' | 'photo';
@@ -77,7 +77,7 @@ export default function CompletionModal({
       <View style={styles.sheet}>
         <View style={styles.grabber} />
         <Pressable style={styles.closeBtn} onPress={onCancel} hitSlop={10}>
-          <Ionicons name="close" size={20} color={colors.faint} />
+          <Ionicons name="close" size={20} color={colors.ink400} />
         </Pressable>
 
         {step === 'choice' ? (
@@ -91,26 +91,32 @@ export default function CompletionModal({
               </Text>
             ) : null}
 
-            <Pressable style={styles.optionRow} onPress={onSelectHandoff}>
-              <View style={[styles.optionIcon, { backgroundColor: colors.brandSoft }]}>
-                <Ionicons name="hand-left-outline" size={22} color={colors.brandDark} />
+            <Pressable
+              style={({ pressed }) => [styles.optionRow, pressed && styles.optionRowPressed]}
+              onPress={onSelectHandoff}
+            >
+              <View style={[styles.optionIcon, { backgroundColor: colors.brand100 }]}>
+                <Ionicons name="hand-left-outline" size={22} color={colors.brand700} />
               </View>
               <View style={styles.optionText}>
                 <Text style={styles.optionTitle}>手渡し</Text>
                 <Text style={styles.optionSub}>対面でお渡しします</Text>
               </View>
-              <Ionicons name="chevron-forward" size={18} color={colors.faint} />
+              <Ionicons name="chevron-forward" size={18} color={colors.ink300} />
             </Pressable>
 
-            <Pressable style={styles.optionRow} onPress={handleDropoff}>
-              <View style={[styles.optionIcon, { backgroundColor: colors.doneSoft }]}>
-                <Ionicons name="cube-outline" size={22} color={colors.done} />
+            <Pressable
+              style={({ pressed }) => [styles.optionRow, pressed && styles.optionRowPressed]}
+              onPress={handleDropoff}
+            >
+              <View style={[styles.optionIcon, { backgroundColor: colors.done100 }]}>
+                <Ionicons name="cube-outline" size={22} color={colors.done700} />
               </View>
               <View style={styles.optionText}>
                 <Text style={styles.optionTitle}>置き配</Text>
                 <Text style={styles.optionSub}>玄関先などに置いて配達します</Text>
               </View>
-              <Ionicons name="chevron-forward" size={18} color={colors.faint} />
+              <Ionicons name="chevron-forward" size={18} color={colors.ink300} />
             </Pressable>
           </>
         ) : (
@@ -124,7 +130,11 @@ export default function CompletionModal({
                 return (
                   <Pressable
                     key={slot}
-                    style={[styles.photoBox, uri && styles.photoBoxCaptured]}
+                    style={({ pressed }) => [
+                      styles.photoBox,
+                      uri && styles.photoBoxCaptured,
+                      pressed && styles.photoBoxPressed,
+                    ]}
                     onPress={() => handleTakePhoto(slot)}
                   >
                     {uri ? (
@@ -136,7 +146,7 @@ export default function CompletionModal({
                       </>
                     ) : (
                       <>
-                        <Ionicons name="camera-outline" size={26} color={colors.faint} />
+                        <Ionicons name="camera-outline" size={26} color={colors.ink300} />
                         <Text style={styles.photoText}>{slot + 1}枚目</Text>
                       </>
                     )}
@@ -151,7 +161,10 @@ export default function CompletionModal({
               </Text>
             ) : null}
 
-            <Pressable style={styles.confirmBtn} onPress={handleConfirm}>
+            <Pressable
+              style={({ pressed }) => [styles.confirmBtn, pressed && styles.confirmBtnPressed]}
+              onPress={handleConfirm}
+            >
               <Text style={styles.confirmText}>
                 {photoCount > 0 ? `確定して次へ（${photoCount}枚）` : '写真なしで完了'}
               </Text>
@@ -169,12 +182,12 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(10,14,20,0.45)',
   },
   sheet: {
-    backgroundColor: colors.card,
+    backgroundColor: colors.surface,
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
-    padding: 20,
-    paddingBottom: 30,
-    ...shadow.floating,
+    padding: space.lg,
+    paddingBottom: space.xxl,
+    ...elevation.e3,
   },
   grabber: {
     alignSelf: 'center',
@@ -182,38 +195,39 @@ const styles = StyleSheet.create({
     height: 4,
     borderRadius: 2,
     backgroundColor: colors.line,
-    marginBottom: 12,
+    marginBottom: space.md,
   },
   closeBtn: {
     position: 'absolute',
-    top: 16,
-    right: 16,
+    top: space.base,
+    right: space.base,
     padding: 4,
   },
   title: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: colors.ink,
+    ...type.h2,
+    color: colors.ink900,
     textAlign: 'center',
     marginBottom: 4,
   },
   subtitle: {
-    fontSize: 12.5,
-    color: colors.soft,
+    ...type.caption,
+    color: colors.ink500,
     textAlign: 'center',
-    marginBottom: 16,
+    marginBottom: space.base,
   },
   optionRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    backgroundColor: colors.bg,
+    gap: space.md,
+    minHeight: 56,
+    backgroundColor: colors.paper,
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.line,
-    padding: 14,
-    marginTop: 10,
+    padding: space.md,
+    marginTop: space.sm,
   },
+  optionRowPressed: { opacity: 0.85 },
   optionIcon: {
     width: 42,
     height: 42,
@@ -225,18 +239,18 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   optionTitle: {
+    ...type.bodyStrong,
     fontSize: 15,
-    fontWeight: '800',
-    color: colors.ink,
+    color: colors.ink900,
   },
   optionSub: {
-    fontSize: 11.5,
-    color: colors.faint,
+    ...type.caption,
+    color: colors.ink400,
     marginTop: 2,
   },
   photoGuide: {
-    fontSize: 12,
-    color: colors.soft,
+    ...type.caption,
+    color: colors.ink500,
     textAlign: 'center',
     lineHeight: 17,
     marginTop: 4,
@@ -244,8 +258,8 @@ const styles = StyleSheet.create({
   },
   photoRow: {
     flexDirection: 'row',
-    gap: 10,
-    marginTop: 14,
+    gap: space.sm,
+    marginTop: space.md,
   },
   photoBox: {
     flex: 1,
@@ -254,14 +268,15 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: colors.line,
     borderStyle: 'dashed',
-    backgroundColor: colors.bg,
+    backgroundColor: colors.paper,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
     overflow: 'hidden',
   },
+  photoBoxPressed: { opacity: 0.75 },
   photoBoxCaptured: {
-    backgroundColor: colors.doneSoft,
+    backgroundColor: colors.done100,
     borderColor: colors.done,
     borderStyle: 'solid',
   },
@@ -278,23 +293,25 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   photoText: {
+    ...type.bodyStrong,
     fontSize: 13,
-    fontWeight: '700',
-    color: colors.faint,
+    color: colors.ink300,
   },
   note: {
-    fontSize: 11,
-    color: colors.faint,
+    ...type.caption,
+    color: colors.ink400,
     textAlign: 'center',
-    marginTop: 10,
+    marginTop: space.sm,
   },
   confirmBtn: {
-    marginTop: 18,
-    backgroundColor: colors.brand,
+    marginTop: space.lg,
+    minHeight: 56,
+    backgroundColor: colors.brand600,
     borderRadius: radius.md,
-    paddingVertical: 15,
     alignItems: 'center',
+    justifyContent: 'center',
   },
+  confirmBtnPressed: { opacity: 0.9 },
   confirmText: {
     color: colors.white,
     fontSize: 15,

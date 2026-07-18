@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, radius, shadow } from '../theme';
+import { colors, elevation, radius, space, type } from '../theme';
 import { Stop } from '../types';
 
 interface Props {
@@ -42,7 +42,7 @@ function toXY(lat: number, lng: number, b: Bounds) {
 function pinColor(status: Stop['status']) {
   if (status === '完了') return colors.done;
   if (status === '不在') return colors.absent;
-  return '#b6bfc9';
+  return colors.pending;
 }
 
 export default function MapScreen({ stops, showToast }: Props) {
@@ -70,7 +70,7 @@ export default function MapScreen({ stops, showToast }: Props) {
     <View style={styles.container}>
       <View style={styles.header}>
         <Pressable hitSlop={8} onPress={() => showToast('メニュー（モック）')}>
-          <Ionicons name="menu-outline" size={24} color={colors.ink} />
+          <Ionicons name="menu-outline" size={24} color={colors.ink800} />
         </Pressable>
         <Text style={styles.headerTitle}>地図</Text>
         <View style={{ width: 24 }} />
@@ -126,22 +126,22 @@ export default function MapScreen({ stops, showToast }: Props) {
           </View>
 
           <Pressable
-            style={styles.locateBtn}
+            style={({ pressed }) => [styles.locateBtn, pressed && styles.locateBtnPressed]}
             onPress={() => showToast('現在地に移動（モック）')}
           >
-            <Ionicons name="navigate" size={18} color={colors.brand} />
+            <Ionicons name="navigate" size={18} color={colors.brand600} />
           </Pressable>
         </View>
 
         <View style={styles.legend}>
-          <LegendItem color="#b6bfc9" label="未配達" />
+          <LegendItem color={colors.pending} label="未配達" />
           <LegendItem color={colors.done} label="完了" />
           <LegendItem color={colors.absent} label="不在" />
-          <LegendItem color={colors.brand} label="現在地" />
+          <LegendItem color={colors.brand600} label="現在地" />
         </View>
 
         <Pressable
-          style={styles.navBtn}
+          style={({ pressed }) => [styles.navBtn, pressed && styles.navBtnPressed]}
           onPress={() => showToast('🧭 GoogleMapでナビを開始します（モック）')}
         >
           <Ionicons name="navigate-outline" size={18} color={colors.white} />
@@ -172,14 +172,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 18,
-    paddingTop: 14,
-    paddingBottom: 12,
-    backgroundColor: colors.card,
+    paddingHorizontal: space.lg,
+    paddingTop: space.md,
+    paddingBottom: space.md,
+    backgroundColor: colors.surface,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.hairline,
   },
-  headerTitle: { fontSize: 17, fontWeight: '800', color: colors.ink },
-  body: { flex: 1, backgroundColor: colors.bg },
-  bodyContent: { padding: 16, paddingBottom: 28 },
+  headerTitle: { ...type.h2, color: colors.ink900 },
+  body: { flex: 1, backgroundColor: colors.paper },
+  bodyContent: { padding: space.base, paddingBottom: space.xxl },
 
   mapBox: {
     width: '100%',
@@ -206,9 +208,8 @@ const styles = StyleSheet.create({
   },
   mapLabel: {
     position: 'absolute',
-    fontSize: 10,
-    color: colors.faint,
-    fontWeight: '700',
+    ...type.caption,
+    color: colors.ink400,
   },
   pin: {
     position: 'absolute',
@@ -239,7 +240,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginLeft: -8,
     marginTop: -8,
-    backgroundColor: colors.brand,
+    backgroundColor: colors.brand600,
   },
   meDot: {
     width: 16,
@@ -247,51 +248,53 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginLeft: -8,
     marginTop: -8,
-    backgroundColor: colors.brand,
+    backgroundColor: colors.brand600,
     borderWidth: 3,
     borderColor: colors.white,
   },
   locateBtn: {
     position: 'absolute',
-    right: 12,
-    bottom: 12,
+    right: space.md,
+    bottom: space.md,
     width: 40,
     height: 40,
     borderRadius: 20,
     backgroundColor: colors.white,
     alignItems: 'center',
     justifyContent: 'center',
-    ...shadow.floating,
+    ...elevation.e3,
   },
+  locateBtnPressed: { opacity: 0.85 },
 
   legend: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'center',
-    gap: 14,
-    marginTop: 12,
+    gap: space.md,
+    marginTop: space.md,
   },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   legendDot: { width: 9, height: 9, borderRadius: 5 },
-  legendText: { fontSize: 11.5, color: colors.soft },
+  legendText: { ...type.caption, color: colors.ink500 },
 
   navBtn: {
     flexDirection: 'row',
-    gap: 8,
+    gap: space.sm,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.brand,
+    minHeight: 56,
+    backgroundColor: colors.brand600,
     borderRadius: radius.lg,
-    paddingVertical: 15,
-    marginTop: 16,
-    ...shadow.floating,
+    marginTop: space.base,
+    ...elevation.e3,
   },
+  navBtnPressed: { opacity: 0.9, transform: [{ scale: 0.99 }] },
   navBtnText: { color: colors.white, fontSize: 15, fontWeight: '800' },
   mapPlanNote: {
-    fontSize: 11,
-    color: colors.faint,
+    ...type.caption,
+    color: colors.ink400,
     lineHeight: 16,
-    marginTop: 10,
-    paddingHorizontal: 4,
+    marginTop: space.sm,
+    paddingHorizontal: space.xs,
   },
 });
