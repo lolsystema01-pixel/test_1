@@ -27,6 +27,10 @@
 -- =============================================================
 alter table public.delivery_results drop column if exists photo_path;
 
+-- 旧版（単数photo_path・2引数attach＝MED-3前の弱い前方一致版）の残骸を除去。
+-- 旧版適用済み環境へ再適用したとき、旧2引数attachがdropされた列を参照して残るのを防ぐ。
+drop function if exists public.attach_delivery_photo(text, text);
+
 create table if not exists public.delivery_photos (
   id              bigint generated always as identity primary key,
   result_id       bigint not null references public.delivery_results(id) on delete cascade,
