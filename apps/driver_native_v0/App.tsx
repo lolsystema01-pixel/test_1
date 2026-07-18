@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import {
@@ -26,7 +26,8 @@ import TodayScreen from './src/screens/TodayScreen';
 
 // LIVEモード（env設定あり）のときだけ意味を持つ認証状態機械。
 // DEMOモード（env未設定）は常に 'signedIn' 相当として扱い、従来のモック動作をそのまま維持する。
-type AuthStatus = 'checking' | 'signedOut' | 'unauthorized' | 'signedIn';
+// 'error' は認証解決中の一時・通信エラー（本当に未登録＝'unauthorized' とは区別し、再試行可能にする）。
+type AuthStatus = 'checking' | 'signedOut' | 'unauthorized' | 'error' | 'signedIn';
 
 interface DriverInfo {
   driverId: string;
@@ -60,6 +61,9 @@ function AppInner() {
     setToast({ id: Date.now(), message });
   };
 
+  // resolve() を保持しておき、「再試行」ボタンから同じ解決処理を呼べるようにする。
+  const resolveAuthRef = useRef<() => Promise<void>>(async () => {});
+
   // --- 認証（LIVEモードのみ）: セッション変化を購読し、role=driver＋driver_id有りのみ許可 ---
   useEffect(() => {
     if (!isLiveMode || !supabase) return;
@@ -73,16 +77,23 @@ function AppInner() {
         if (result.status === 'ok') {
           setDriverInfo(result.identity);
           setAuthStatus('signedIn');
-        } else {
+        } else if (result.status === 'unauthorized') {
+          // 本当に未登録（profile無し／role≠driver／driver_id無し）のときのみ
           setDriverInfo(null);
           setAuthStatus('unauthorized');
+        } else {
+          // 通信・一時エラー：unauthorizedにせず再試行可能な画面へ
+          setDriverInfo(null);
+          setAuthStatus('error');
         }
       } catch {
         if (!active) return;
         setDriverInfo(null);
-        setAuthStatus('unauthorized');
+        setAuthStatus('error');
       }
     };
+
+    resolveAuthRef.current = resolve;
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!active) return;
@@ -99,6 +110,10 @@ function AppInner() {
       sub.subscription.unsubscribe();
     };
   }, []);
+
+  const handleRetryAuth = () => {
+    void resolveAuthRef.current();
+  };
 
   // --- 当日ルート取得（LIVEモード・signedIn後） ---
   useEffect(() => {
@@ -170,7 +185,12 @@ function AppInner() {
   const submitDeliveryResult = async (trackingNumber: string, status: '完了' | '不在') => {
     const coords = await getCurrentCoords(); // 拒否/失敗/5秒タイムアウトでも null で続行
     const outcome = await recordDeliveryResult(trackingNumber, status, coords?.lat ?? null, coords?.lng ?? null);
+    // 方針: 恒久エラー(42501/23514/P0002)＝サーバに記録されない → 画面（楽観更新）も未処理へ巻き戻す。
+    //       一時エラー＝キューに積んで自動再送するので、楽観更新の「済」表示はそのまま維持する。
     if (outcome.outcome === 'permanent') {
+      setStops((prev) =>
+        prev.map((s) => (s.trackingNumber === trackingNumber ? { ...s, status: '未処理' } : s))
+      );
       showToast(`⚠️ ${outcome.message ?? '記録に失敗しました'}`);
     }
     // 'ok' は既存のトースト（完了/不在タップ時）でカバー済み。'queued' はサイレント（自動再送）。
@@ -202,6 +222,9 @@ function AppInner() {
   } else if (isLiveMode && authStatus === 'unauthorized') {
     showChrome = false;
     content = <UnauthorizedScreen onSignOut={handleSignOut} />;
+  } else if (isLiveMode && authStatus === 'error') {
+    showChrome = false;
+    content = <AuthErrorScreen onRetry={handleRetryAuth} onSignOut={handleSignOut} />;
   } else if (isLiveMode && !routeLoaded) {
     content = <CenteredMessage label="本日のルートを取得しています…" showSpinner />;
   } else if (!clockedIn) {
@@ -278,6 +301,25 @@ function UnauthorizedScreen({ onSignOut }: { onSignOut: () => void }) {
   );
 }
 
+// 認証解決中の一時・通信エラー用（本当に未登録のUnauthorizedScreenとは別）。再試行を主動線にする。
+function AuthErrorScreen({ onRetry, onSignOut }: { onRetry: () => void; onSignOut: () => void }) {
+  return (
+    <View style={styles.centered}>
+      <Text style={styles.centeredTitle}>確認できませんでした</Text>
+      <Text style={styles.centeredText}>
+        ログイン状態の確認中に通信エラーが発生しました。{'\n'}
+        電波状況をご確認のうえ、もう一度お試しください。
+      </Text>
+      <Pressable style={styles.retryBtn} onPress={onRetry}>
+        <Text style={styles.retryBtnText}>再試行</Text>
+      </Pressable>
+      <Pressable style={styles.signOutBtn} onPress={onSignOut}>
+        <Text style={styles.signOutBtnText}>ログアウト</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 // 開発・検証用の小さな表示（DEMO=モックデータ／LIVE=Supabase接続）。任意・軽量。
 function ModeBadge({ topInset }: { topInset: number }) {
   return (
@@ -317,6 +359,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   signOutBtnText: { color: colors.brand, fontWeight: '800', fontSize: 13.5 },
+  retryBtn: {
+    marginTop: 22,
+    backgroundColor: colors.brand,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 22,
+  },
+  retryBtnText: { color: colors.white, fontWeight: '800', fontSize: 13.5 },
   modeBadge: {
     position: 'absolute',
     right: 10,

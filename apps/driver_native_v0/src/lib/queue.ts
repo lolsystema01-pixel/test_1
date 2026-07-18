@@ -105,14 +105,24 @@ export async function recordDeliveryResult(
   return { outcome: 'queued' };
 }
 
+// flushQueue の多重起動ガード（foreground復帰の連打・アプリ内複数箇所からの呼び出しが重ならないように）。
+// enqueue側の「同一問合番号は上書き」方針はそのまま維持し、ここでは実行の直列化のみ行う。
+let flushInFlight = false;
+
 // 保留分の再送。'retry' はキューに残す（次回フラッシュで再試行）。
 export async function flushQueue(): Promise<void> {
-  const items = await readQueue();
-  for (const item of items) {
-    const status = await attemptSend(item);
-    if (status === 'ok' || status === 'permanent') {
-      await dequeue(item.trackingNumber);
+  if (flushInFlight) return;
+  flushInFlight = true;
+  try {
+    const items = await readQueue();
+    for (const item of items) {
+      const status = await attemptSend(item);
+      if (status === 'ok' || status === 'permanent') {
+        await dequeue(item.trackingNumber);
+      }
     }
+  } finally {
+    flushInFlight = false;
   }
 }
 
