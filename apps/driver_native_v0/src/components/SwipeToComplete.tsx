@@ -20,24 +20,34 @@ export default function SwipeToComplete({ label = 'スワイプで完了', onCom
   const translateX = useRef(new Animated.Value(0)).current;
   const maxTranslate = Math.max(trackWidth - HANDLE_SIZE - TRACK_PADDING * 2, 1);
 
+  // PanResponderはuseRefで一度だけ生成されるため、レンダー変数を閉じ込めると
+  // 初回レイアウト前の値（トラック幅0→maxTranslate=1px）で固定されてしまう。
+  // 最新値はrefで渡し、ハンドルが指に正しく追従するようにする。
+  const maxTranslateRef = useRef(1);
+  maxTranslateRef.current = maxTranslate;
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
+
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => !disabled,
       onMoveShouldSetPanResponder: () => !disabled,
       onPanResponderMove: (_evt, gesture) => {
-        const next = Math.min(Math.max(gesture.dx, 0), maxTranslate);
+        const max = maxTranslateRef.current;
+        const next = Math.min(Math.max(gesture.dx, 0), max);
         translateX.setValue(next);
       },
       onPanResponderRelease: (_evt, gesture) => {
-        const next = Math.min(Math.max(gesture.dx, 0), maxTranslate);
-        const passed = next >= maxTranslate * THRESHOLD_RATIO;
+        const max = maxTranslateRef.current;
+        const next = Math.min(Math.max(gesture.dx, 0), max);
+        const passed = next >= max * THRESHOLD_RATIO;
         if (passed) {
           Animated.timing(translateX, {
-            toValue: maxTranslate,
+            toValue: max,
             duration: 120,
             useNativeDriver: false,
           }).start(() => {
-            onComplete();
+            onCompleteRef.current();
             Animated.timing(translateX, {
               toValue: 0,
               duration: 160,
@@ -51,6 +61,9 @@ export default function SwipeToComplete({ label = 'スワイプで完了', onCom
             friction: 6,
           }).start();
         }
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(translateX, { toValue: 0, useNativeDriver: false, friction: 6 }).start();
       },
     })
   ).current;
