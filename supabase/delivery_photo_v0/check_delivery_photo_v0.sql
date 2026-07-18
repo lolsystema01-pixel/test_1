@@ -123,6 +123,28 @@ where schemaname = 'storage' and tablename = 'objects'
   and policyname in ('delivery_photos_insert','delivery_photos_select')
 order by policyname;
 
+-- ④b storage.objects 全ポリシーの緩さ横断検査（このモジュール以外の分も含む）
+--   目的: delivery_photos_insert/select 個別の中身確認（④a）だけでなく、storage.objects上に
+--   存在する「全ての」PERMISSIVEポリシーの中に (a) to public（未認証含む全ロールに公開）のもの、
+--   または (b) qual（using）／with_check に bucket_id での絞り込みを含まない＝バケット横断で
+--   緩い許可、が無いことを確認する。他モジュール（他バケット）のポリシー設定ミスの検出も兼ねる。
+select schemaname, tablename, policyname, permissive, roles, cmd,
+       qual       as using_expr,
+       with_check as check_expr
+from pg_policies
+where schemaname = 'storage' and tablename = 'objects'
+  and permissive = 'PERMISSIVE'
+  and (
+        'public' = any(roles)                                                -- to public（未認証含む）
+        or (qual is not null and qual not ilike '%bucket_id%')                -- using に bucket_id 条件が無い
+        or (with_check is not null and with_check not ilike '%bucket_id%')    -- with_check に bucket_id 条件が無い
+      );
+-- 期待: 0行。
+--   ⚠ 1行でも出た場合: そのポリシーがバケットを問わず（または未認証に対して）意図せず広い
+--   範囲の読み書きを許可している可能性が高い。delivery_photos_insert/delivery_photos_select
+--   自身は bucket_id='delivery-photos' 条件を持つため、ここに出るのは他モジュールのポリシーの
+--   疑いが強い＝policyname 列で特定してモジュール側を修正すること。
+
 -- =============================================================
 -- 合格条件との対応
 --   ・photo_path列が追加されている                                  … ①
@@ -131,4 +153,5 @@ order by policyname;
 --   ・attach_delivery_photo: 本人紐付けOK・冪等                     … ②
 --   ・attach_delivery_photo: 他人フォルダ拒否/anon拒否/非driver拒否/未存在拒否 … ③
 --   ・Storageポリシーの実効性（実オブジェクトのINSERT/SELECT）      … ④（実機必須・確認結果メモ.md参照）
+--   ・storage.objects上に to public／bucket_id条件無しの緩い許可ポリシーが0件 … ④b
 -- =============================================================
