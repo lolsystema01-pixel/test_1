@@ -190,6 +190,16 @@ function AppInner() {
     showToast('🏁 お疲れさまでした');
   };
 
+  // 退勤後に出勤画面へ戻る（次の勤務サイクル）。勤怠の状態だけリセットし、
+  // 荷物の処理状態（stops）は当日ルートのまま維持する（勤怠と配達実績は独立）。
+  const handleBackToClockIn = () => {
+    setClockedIn(false);
+    setClockedOut(false);
+    setClockInTime(null);
+    setClockOutTime(null);
+    setActiveTab('delivery');
+  };
+
   const handleFinalizeStop = (stop: Stop, status: StopStatus, photoUris?: string[]) => {
     // 楽観更新：押した瞬間にローカルを済にする（LIVEモードの送信は裏で行う）
     setStops((prev) => prev.map((s) => (s.trackingNumber === stop.trackingNumber ? { ...s, status } : s)));
@@ -291,6 +301,7 @@ function AppInner() {
         clockedOut={clockedOut}
         clockOutTime={clockOutTime}
         onClockOut={handleClockOut}
+        onBackToClockIn={handleBackToClockIn}
       />
     );
   } else {

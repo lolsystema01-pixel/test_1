@@ -10,6 +10,7 @@ interface Props {
   clockedOut: boolean;
   clockOutTime: Date | null;
   onClockOut: () => void;
+  onBackToClockIn: () => void; // 退勤後に出勤画面へ戻る（次の勤務サイクルへ）
 }
 
 function formatClock(d: Date): string {
@@ -29,6 +30,7 @@ export default function TodayScreen({
   clockedOut,
   clockOutTime,
   onClockOut,
+  onBackToClockIn,
 }: Props) {
   const allDone = counts.remaining === 0;
   const title = clockedOut || allDone ? 'お疲れさまでした！' : '本日の実績';
@@ -104,12 +106,21 @@ export default function TodayScreen({
         </View>
 
         {clockedOut ? (
-          <View style={[styles.clockOutBtn, styles.clockOutBtnDone]}>
-            <Ionicons name="checkmark" size={18} color={colors.ink500} />
-            <Text style={styles.clockOutDoneText}>
-              退勤済み {clockOutTime ? formatClock(clockOutTime) : ''}
-            </Text>
-          </View>
+          <>
+            <View style={[styles.clockOutBtn, styles.clockOutBtnDone]}>
+              <Ionicons name="checkmark" size={18} color={colors.ink500} />
+              <Text style={styles.clockOutDoneText}>
+                退勤済み {clockOutTime ? formatClock(clockOutTime) : ''}
+              </Text>
+            </View>
+            <Pressable
+              style={({ pressed }) => [styles.backToClockInBtn, pressed && styles.clockOutBtnPressed]}
+              onPress={onBackToClockIn}
+            >
+              <Ionicons name="refresh" size={18} color={colors.brand} />
+              <Text style={styles.backToClockInText}>出勤画面へ戻る</Text>
+            </Pressable>
+          </>
         ) : (
           <Pressable
             style={({ pressed }) => [styles.clockOutBtn, pressed && styles.clockOutBtnPressed]}
@@ -213,6 +224,24 @@ const styles = StyleSheet.create({
   durationLabel: { ...type.bodyStrong, color: colors.ink700 },
   durationValue: { ...type.metric, fontSize: 17, color: colors.ink900 },
 
+  backToClockInBtn: {
+    width: '100%',
+    minHeight: 56,
+    flexDirection: 'row',
+    gap: space.sm,
+    backgroundColor: colors.brandBg,
+    borderWidth: 1.5,
+    borderColor: colors.brand,
+    borderRadius: radius.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: space.md,
+  },
+  backToClockInText: {
+    ...type.bodyStrong,
+    fontSize: 16,
+    color: colors.brand,
+  },
   clockOutBtn: {
     width: '100%',
     minHeight: 60,
