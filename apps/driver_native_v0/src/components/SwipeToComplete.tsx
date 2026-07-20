@@ -5,7 +5,12 @@ import { colors, elevation, radius, type } from '../theme';
 
 const HANDLE_SIZE = 46;
 const TRACK_PADDING = 4;
-const THRESHOLD_RATIO = 0.72;
+// 完了判定はゆるめに（現場は手袋・片手・歩きながら）:
+//   ・距離: トラックの55%まで引けば成立（旧72%は遠すぎた）
+//   ・フリック: 速い払い（vx>=0.65px/ms）なら30%まで引ければ成立
+const THRESHOLD_RATIO = 0.55;
+const FLICK_VELOCITY = 0.65;
+const FLICK_MIN_RATIO = 0.3;
 
 interface Props {
   label?: string;
@@ -40,7 +45,9 @@ export default function SwipeToComplete({ label = 'スワイプで完了', onCom
       onPanResponderRelease: (_evt, gesture) => {
         const max = maxTranslateRef.current;
         const next = Math.min(Math.max(gesture.dx, 0), max);
-        const passed = next >= max * THRESHOLD_RATIO;
+        const passed =
+          next >= max * THRESHOLD_RATIO ||
+          (gesture.vx >= FLICK_VELOCITY && next >= max * FLICK_MIN_RATIO);
         if (passed) {
           Animated.timing(translateX, {
             toValue: max,
@@ -79,15 +86,15 @@ export default function SwipeToComplete({ label = 'スワイプで完了', onCom
     <View
       style={[styles.track, disabled && styles.trackDisabled]}
       onLayout={(e) => setTrackWidth(e.nativeEvent.layout.width)}
+      // 掴み判定はトラック全体（バーのどこから撫でてもハンドルが追従する。
+      // ハンドル玉46pxだけだと「触ったのに反応せん」が起きる＝現場でシビアすぎる）
+      {...(disabled ? {} : panResponder.panHandlers)}
     >
       <Animated.View style={[styles.fill, { width: fillWidth }]} />
       <Animated.Text style={[styles.label, { opacity: labelOpacity }]}>
         {`→ ${label}`}
       </Animated.Text>
-      <Animated.View
-        style={[styles.handle, { transform: [{ translateX }] }]}
-        {...(disabled ? {} : panResponder.panHandlers)}
-      >
+      <Animated.View style={[styles.handle, { transform: [{ translateX }] }]}>
         <Ionicons name="checkmark" size={22} color={colors.white} />
       </Animated.View>
     </View>
