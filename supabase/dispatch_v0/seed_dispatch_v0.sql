@@ -54,13 +54,18 @@ insert into public.zone_plan (common_id, zone_no, adjacent_zones, depot_code, sp
     split_threshold = excluded.split_threshold;
 
 -- ④ 全国Master（共通ID→自治体：rank2=同一市 判定に使用）------------
-insert into public.address_master (town_key, municipality, town, common_id) values
-  ('愛知県|岡崎市|箱柳町','岡崎市','箱柳町','OKZ_C_01_08'),
-  ('愛知県|岡崎市|小美町','岡崎市','小美町','OKZ_E_05_12'),
-  ('愛知県|豊田市|西町','豊田市','西町','TYT_C_25_36'),
-  ('愛知県|東海市|南柴田町','東海市','南柴田町','TKI_C_03_07'),
-  ('愛知県|知多市|八幡','知多市','八幡','CTA_C_06_13')
-  on conflict (town_key) do nothing;
+-- ⚠ RETIRED（2026-07-17）: address_master は撤去済み（語彙是正⑤）。
+--   rank2（同一市判定）の市名は、④の関数移行で **area_master** から引くようになった
+--   （zone_rank / dispatch_build＝vocab_fix_v0/migrate_functions_to_area_master_v0.sql）。
+--   ★この insert を復活させないこと（フレッシュ環境では即エラー／旧マスタ復活の入口）。
+--   配車の検証に市名が要る場合は area_master 側に該当 common_id の行があることを確認する。
+-- insert into public.address_master (town_key, municipality, town, common_id) values
+--   ('愛知県|岡崎市|箱柳町','岡崎市','箱柳町','OKZ_C_01_08'),
+--   ('愛知県|岡崎市|小美町','岡崎市','小美町','OKZ_E_05_12'),
+--   ('愛知県|豊田市|西町','豊田市','西町','TYT_C_25_36'),
+--   ('愛知県|東海市|南柴田町','東海市','南柴田町','TKI_C_03_07'),
+--   ('愛知県|知多市|八幡','知多市','八幡','CTA_C_06_13')
+--   on conflict (town_key) do nothing;
 
 -- ⑤ 当日の稼働予定（承認のみ cap に入る。申請中は除外される）--------
 delete from public.work_schedules

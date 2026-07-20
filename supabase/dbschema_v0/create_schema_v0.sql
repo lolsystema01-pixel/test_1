@@ -60,14 +60,23 @@ create table public.zone_plan (
 );
 comment on table public.zone_plan is 'マスタ: 全国ZonePlan（共通ID→ゾーン・隣接）。版管理は範囲外';
 
+-- ⚠⚠ RETIRED（2026-07-17）: address_master は撤去済み（本番DBに存在しません）。
+--   後継は **area_master**（area_master_v0/area_master_schema_v0.sql）。
+--   撤去の経緯: 指示書「語彙是正→address_master 撤去 v0.1」／ supabase/vocab_fix_v0/
+--   ・新旧で共通IDの番号体系が別物（箱柳町: 旧 OKZ_C_01_08 → 新 OKZ_C_01_06）。
+--     旧マスタを復活させても、実データの新語彙とは噛み合いません。
+--   ★この create を復活させないでください。復活させたうえで dispatch_v0.sql /
+--     delivery_status_rpc_v0.sql を再実行すると、④の移行が巻き戻り、
+--     「エラー無しで市名NULL・同一市判定不成立」という静かな劣化に戻ります。
+--   下記は履歴として残しています（実行しない）。
 -- 全国Master（TownKey・共通ID）
-create table public.address_master (
-  town_key      text primary key,                              -- TownKey（自治体＋町名）
-  municipality  text,                                          -- 自治体
-  town          text,                                          -- 町名
-  common_id     text references public.zone_plan(common_id)    -- 共通ID（→ZonePlan）
-);
-comment on table public.address_master is 'マスタ: 全国Master（TownKey・共通ID）。版管理は範囲外';
+-- create table public.address_master (
+--   town_key      text primary key,                              -- TownKey（自治体＋町名）
+--   municipality  text,                                          -- 自治体
+--   town          text,                                          -- 町名
+--   common_id     text references public.zone_plan(common_id)    -- 共通ID（→ZonePlan）
+-- );
+-- comment on table public.address_master is 'マスタ: 全国Master（TownKey・共通ID）。版管理は範囲外';
 
 
 -- =============================================================

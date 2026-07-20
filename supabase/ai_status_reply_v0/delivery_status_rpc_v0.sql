@@ -10,6 +10,18 @@
 -- ・問合番号は荷受人が未認証で照会する想定（PoC）。本番は簡易認証(7.1)を前段に付ける。
 -- ・service_role を使わずに済むよう、関数経由でのみ非PII状況を引けるようにする。
 -- =============================================================
+-- ⚠⚠ RETIRED（2026-07-17）: この下の定義は **旧版** です（market lookup が address_master）。
+--   本番DBの実体は vocab_fix_v0/migrate_functions_to_area_master_v0.sql（④）で
+--   **area_master 参照に書き換え済み**。address_master は⑤で drop 済み（存在しません）。
+--
+--   ★このファイルを再実行すると④を巻き戻します（language sql のため address_master 不在では
+--     作成時にエラーになりますが、仮に旧マスタを復活させて実行すると
+--     anon 公開APIが新語彙の市名を引けなくなります＝受付UI・AI応答の市名が NULL に戻る）。
+--
+--   この関数を直すときは **migrate_functions_to_area_master_v0.sql の側を正** とし、
+--   ここは PII マスキングの設計意図（何を返さないか）を読む資料として扱ってください。
+--   経緯: supabase/vocab_fix_v0/README.md ／ 確認結果メモ.md
+-- =============================================================
 
 create or replace function public.delivery_status_public(p_tracking_number text)
 returns jsonb

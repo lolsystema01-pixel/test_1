@@ -23,8 +23,9 @@ select c.relname as table_name, c.relrowsecurity as rls_enabled
 from pg_class c
 join pg_namespace n on n.oid = c.relnamespace
 where n.nspname = 'public'
-  and c.relname in ('profiles','depots','offices','zone_plan','address_master',
+  and c.relname in ('profiles','depots','offices','zone_plan','area_master',
                     'deliveries','delivery_index','drivers','work_schedules')
+  -- ※ address_master → area_master に差し替え（旧マスタは語彙是正⑤で撤去済み・2026-07-17）
 order by c.relname;
 
 
