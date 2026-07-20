@@ -50,28 +50,58 @@ where n.nspname='public' and p.proname = 'save_office_init_setup';
 
 -- =============================================================
 -- §4. 権限の実証（なりすまし・rollback で元に戻す）
---   ⚠ 【begin; から rollback; まで丸ごと】選択して実行すること。
---     部分実行すると set local が効かず postgres のまま走る（＝実証にならない）。
---     ※ verify_rls_scope_v0.sql と同じ注意点。
---   ※ <AREA_UID> は area ロールの profiles.user_id に置き換える。
+--
+--   ⚠⚠ 実行方法（ここを間違えると何も起きない／実証にならない）
+--     ・**`begin;` から `rollback;` まで丸ごと**選択して 1回で Run すること。
+--       部分実行すると set local が効かず postgres のまま走る（＝RLSバイパスで実証にならない）。
+--       ※ verify_rls_scope_v0.sql と同じ注意点。
+--     ・下の3行のコメント（`--`）は**外してある**。そのまま実行できる。
+--     ・**UIDの手動置換は不要**。set_config() で area ユーザーを自動で拾う
+--       （`set local` は値に式を書けないが、set_config(..., true) は等価で式を書ける）。
+--
+--   判定は結果の「なりすまし確認」行で行う。role=area / office=<営業所コード> が出れば効いている。
+--   `(null)` なら効いていない（部分実行 or area ユーザーが未登録）。
 -- =============================================================
--- begin;
--- set local role authenticated;
--- set local request.jwt.claims = '{"sub":"<AREA_UID>"}';
+begin;
+
+-- ① postgres のうちに area ユーザーを1人拾って JWT クレームへ入れる（手動置換の代わり）
+select set_config(
+         'request.jwt.claims',
+         json_build_object(
+           'role', 'authenticated',
+           'sub',  (select p.user_id::text from public.profiles p
+                     where p.role = 'area' and p.office_code is not null
+                     order by p.office_code limit 1)
+         )::text,
+         true) as _claims;
+
+-- ② 非特権ロールへ降格（以降 my_role()/my_office() が area を返す）
+select set_config('role', 'authenticated', true) as _role;
+
+-- ③ なりすまし確認（★ここが (null) なら以降の結果は無意味）
+select public.my_role() as role, public.my_office() as office;
+
+-- ④ 自営業所・初回（gdrive_folder_url が NULL）なら保存できる
+--    ※ 対象営業所が既に「完了」だと、ここが権限エラーになる（それも正しい挙動）。
+--      初回の挙動を見たい場合は、事前に対象営業所を NULL に戻しておく。
+select public.save_office_init_setup(
+         public.my_office(), 'https://drive.google.com/drive/folders/TEST', 'Brother TD-2350') as _saved;
+
+-- ⑤ 2回目（もう完了している）は拒否される＝area は恒久的な編集権を持たない
+--    ★ここでエラーになるのが正解。エラーが出た時点でトランザクションは中断され、
+--      下の rollback で DB は元に戻る（＝ ④ の書き込みも取り消される）。
+select public.save_office_init_setup(
+         public.my_office(), 'https://drive.google.com/drive/folders/AGAIN', '汎用サーマル') as _should_fail;
+
+rollback;
+-- 期待:
+--   ③ role=area / office=<営業所コード>（(null) なら部分実行を疑う）
+--   ④ 成功（初回設定として保存できる）
+--   ⑤ 「初期設定を保存する権限がありません…管理者設定（§12.13）から hq が」でエラー
+--   → rollback するので DB には一切残らない。
 --
--- select public.my_role() as role, public.my_office() as office;   -- なりすまし確認（area / 自営業所）
---
--- -- ① 自営業所・初回（gdrive_folder_url が NULL）なら保存できる
--- select public.save_office_init_setup(public.my_office(),
---          'https://drive.google.com/drive/folders/TEST', 'Brother TD-2350');
---
--- -- ② 2回目（既に完了）は拒否される＝area は恒久的な編集権を持たない
--- select public.save_office_init_setup(public.my_office(),
---          'https://drive.google.com/drive/folders/AGAIN', '汎用サーマル');   -- ← エラーになるのが正しい
---
--- rollback;
--- 期待: ① 成功 ／ ② 「初期設定を保存する権限がありません…管理者設定（§12.13）から hq が」で拒否。
---       rollback するので DB は元に戻る。
+-- ※ Supabase SQL Editor は最後の結果しか表示しないため、③④⑤ を個別に見たい場合は
+--   ⑤ を一時的に外して（begin〜④＋rollback で）実行し、次に⑤込みで実行するとよい。
 
 
 -- 【実機確認（【人】）】
