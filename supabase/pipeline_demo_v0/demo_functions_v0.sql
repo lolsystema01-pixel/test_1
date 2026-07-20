@@ -1,7 +1,14 @@
 -- =============================================================
+-- ⚠⚠ RETIRED / 停止済み（2026-07-17・セキュリティ修正）
+--   このデモ関数群は **anon 公開の DEFINER＝Critical 脆弱性**（未認証データ破壊＋PII読取・
+--   営業所スコープなし）だったため、全ロールから実行権を剥奪して停止した
+--   （revoke_demo_anon_v0.sql）。末尾の grant ブロックは RETIRED（再実行しても anon は付かない）。
+--   ★このファイルを素直に再実行しても穴は開かない設計にしてあるが、grant ブロックを復活させないこと。
+--   将来「配車・採番の画面」が要るなら案B（area 専用・scope 認可）で作り直す（末尾 RETIRED 注記参照）。
+-- =============================================================
 -- パイプラインデモ v0 — フロントの「配車開始／採番開始」ボタン用 SECURITY DEFINER 関数
 --   ・本物の配車(dispatch_build)・採番(renumber_build)・記録口(record_status_transition)を内部で呼ぶ。
---   ・anon キーから呼べる（DEFINER＝owner権限で実行）。service_role 不要。
+--   ・（旧）anon キーから呼べる（DEFINER＝owner権限で実行）。service_role 不要。← RETIRED（上記）
 --   ・対象は p_date（デモは 2026-06-29）。デモ用途＝一時的。
 -- 実行: Supabase SQL Editor。前提=取込＋②付与＋region_setup（office/drivers）＋
 --       dispatch_v0／status_log_v0／delivery_order_zone_sort_v0 適用済み。
@@ -140,16 +147,24 @@ language sql stable security definer set search_path = public as $$
   group by d.driver_id order by (d.driver_id like '仮%'), d.driver_id;
 $$;
 
--- 権限：anon/authenticated から呼べるように（DEFINERで owner 実行）----------
-do $$
-declare fn text;
-begin
-  for fn in select unnest(array[
-    'public.demo_dispatch_preview(date)','public.demo_renumber_preview(date)',
-    'public.demo_dispatch(date)','public.demo_renumber(date)','public.demo_reset(date)',
-    'public.demo_summary(date)','public.demo_delivery_order(date,text,int)','public.demo_drivers(date)'
-  ]) loop
-    execute format('revoke execute on function %s from public', fn);
-    execute format('grant execute on function %s to anon, authenticated', fn);
-  end loop;
-end $$;
+-- ⚠⚠ RETIRED（2026-07-17・セキュリティ修正）: 元はここで anon/authenticated に grant していた。
+--   独立2監査が Critical 判定（anon＝実質公開で、未認証のデータ破壊 demo_reset ＋ PII読取が可能・
+--   営業所スコープ判定なし）。デモは今後実施しないため **grant は行わない**。
+--   ・実DBの停止は revoke_demo_anon_v0.sql（anon/authenticated/public から全面 revoke）で実施。
+--   ・★この grant ブロックを復活させないこと（再実行で公開穴が再び開く）。
+--   ・将来「配車・採番の画面」が要るなら案B（area 専用・関数内 my_office() スコープ認可・
+--     読取は security_invoker ビュー＋area RLS）で作り直す＝record_status_transition/office_home_summary の規約に合わせる。
+--   ※ 上の create or replace は残してある（案Bの参照用）。再実行しても owner 実行のみで grant は付かない。
+-- 権限：RETIRED（grant しない）----------------------------------------------
+-- do $$
+-- declare fn text;
+-- begin
+--   for fn in select unnest(array[
+--     'public.demo_dispatch_preview(date)','public.demo_renumber_preview(date)',
+--     'public.demo_dispatch(date)','public.demo_renumber(date)','public.demo_reset(date)',
+--     'public.demo_summary(date)','public.demo_delivery_order(date,text,int)','public.demo_drivers(date)'
+--   ]) loop
+--     execute format('revoke execute on function %s from public', fn);
+--     execute format('grant execute on function %s to anon, authenticated', fn);
+--   end loop;
+-- end $$;
