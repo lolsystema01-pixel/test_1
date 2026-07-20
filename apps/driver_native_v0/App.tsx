@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Pressable,
   StyleProp,
@@ -24,8 +25,21 @@ import { DRIVER, generateStops } from './src/mockData';
 import { isLiveMode, supabase } from './src/lib/supabase';
 import { resolveDriverIdentity } from './src/lib/authProfile';
 import { fetchTodayRoute } from './src/lib/deliveries';
-import { recordDeliveryResult, startQueueAutoFlush } from './src/lib/queue';
-import { submitDeliveryPhoto, startPhotoQueueAutoFlush, clearDeliveryPhotos } from './src/lib/photoQueue';
+import {
+  recordDeliveryResult,
+  startQueueAutoFlush,
+  flushQueue,
+  countPendingResults,
+  clearAllPendingResults,
+} from './src/lib/queue';
+import {
+  submitDeliveryPhoto,
+  startPhotoQueueAutoFlush,
+  clearDeliveryPhotos,
+  flushPhotoQueue,
+  countPendingPhotos,
+  clearAllPendingPhotos,
+} from './src/lib/photoQueue';
 import { getCurrentCoords } from './src/lib/location';
 
 import TabBar from './src/components/TabBar';
@@ -272,9 +286,44 @@ function AppInner() {
     void clearDeliveryPhotos(stop.trackingNumber);
   };
 
+  // サインアウト（セキュリティレビューMED対応）：
+  // 端末再割当（Aがログアウト→同一端末でBがログイン）時に、Aの未送信キューがBのセッションで
+  // 送信されると、サーバは42501で拒否→Aの正当な実績が"静かに"消える。これを防ぐため、
+  // ①まず再送を試み、②それでも残る分は件数を明示して確認を取ってから破棄する。
   const handleSignOut = async () => {
     if (!supabase) return;
-    await supabase.auth.signOut();
+    const client = supabase; // Alertコールバック内でTSのnullナローイングが切れるため束縛
+    try {
+      await flushQueue();
+      await flushPhotoQueue();
+    } catch {
+      // 再送失敗は無視（下の残数確認で拾う）
+    }
+    const [nResults, nPhotos] = await Promise.all([countPendingResults(), countPendingPhotos()]);
+    if (nResults + nPhotos > 0) {
+      Alert.alert(
+        '未送信の記録があります',
+        `完了/不在 ${nResults}件・写真 ${nPhotos}枚がまだ送信できていません。\n` +
+          'ログアウトすると端末から削除され、送信されません。\n' +
+          '（電波のある場所でアプリを開き直すと自動送信されます）',
+        [
+          { text: 'ログアウトしない', style: 'cancel' },
+          {
+            text: '削除してログアウト',
+            style: 'destructive',
+            onPress: () => {
+              void (async () => {
+                await clearAllPendingResults();
+                await clearAllPendingPhotos();
+                await client.auth.signOut();
+              })();
+            },
+          },
+        ]
+      );
+      return;
+    }
+    await client.auth.signOut();
   };
 
   const handleTabChange = (tab: TabKey) => {

@@ -251,6 +251,20 @@ export async function submitDeliveryPhoto(
 
 let flushInFlight = false;
 
+// サインアウト前の点検用：未送信の保留写真枚数（queue.ts側と対の関数）
+export async function countPendingPhotos(): Promise<number> {
+  return (await readQueue()).length;
+}
+
+// サインアウト時の明示破棄（ユーザーが確認ダイアログで同意した場合のみ呼ぶ）
+export async function clearAllPendingPhotos(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(QUEUE_KEY);
+  } catch {
+    // 削除失敗時は次回サインイン者のflushでStorageポリシー拒否→恒久破棄される（多層防御）
+  }
+}
+
 // 保留分の再送。アップロードのみ完了しattachだけ残っている場合はその状態をキューに保存し直す
 // （次回はアップロードからやり直さない）。
 export async function flushPhotoQueue(): Promise<void> {

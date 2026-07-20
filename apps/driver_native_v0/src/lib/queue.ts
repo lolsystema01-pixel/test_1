@@ -105,6 +105,21 @@ export async function recordDeliveryResult(
   return { outcome: 'queued' };
 }
 
+// サインアウト前の点検用：未送信の保留件数（セキュリティレビューMED対応・
+// 端末再割当時に前ドライバーの保留が次ドライバーのセッションで送られるのを防ぐ）
+export async function countPendingResults(): Promise<number> {
+  return (await readQueue()).length;
+}
+
+// サインアウト時の明示破棄（ユーザーが確認ダイアログで同意した場合のみ呼ぶ）
+export async function clearAllPendingResults(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(QUEUE_KEY);
+  } catch {
+    // 削除失敗時は次回サインイン者のflushでサーバ側42501拒否→恒久破棄される（多層防御）
+  }
+}
+
 // flushQueue の多重起動ガード（foreground復帰の連打・アプリ内複数箇所からの呼び出しが重ならないように）。
 // enqueue側の「同一問合番号は上書き」方針はそのまま維持し、ここでは実行の直列化のみ行う。
 let flushInFlight = false;
