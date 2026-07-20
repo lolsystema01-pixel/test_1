@@ -323,6 +323,35 @@ await asUser(DRV1, async () => {
 }, { commit: true });
 ok('T6はrecord_delivery_result経由で完了', (await statusOf('900000000206')) === '完了');
 
+console.log('\n[14. 冪等キー（client_request_id）: 同一キー再送=already／新キー=日内再訪で正当に2行目（PR#9レビューMED対応）]');
+await db.exec(`insert into public.deliveries (tracking_number, office_code, driver_id, shipper_id, status) values
+  ('900000000215','A01','DRV001','SHIP01','仕分済')`);
+const KEY1 = '11111111-1111-4111-8111-111111111111';
+const KEY2 = '22222222-2222-4222-8222-222222222222';
+const callKey = (tn, result, key) =>
+  db.query(`select public.record_delivery_result($1,$2,$3,$4,$5) r`, [tn, result, null, null, key]);
+await asUser(DRV1, async () => {
+  const r = (await callKey('900000000215', '不在', KEY1)).rows[0].r;
+  ok('1回目（KEY1・不在）result=recorded', r.result === 'recorded');
+}, { commit: true });
+// 「サーバcommit済み・レスポンス未達→キュー再送」を模擬＝同一KEY1でもう一度呼ぶ
+await asUser(DRV1, async () => {
+  const r = (await callKey('900000000215', '不在', KEY1)).rows[0].r;
+  ok('同一KEY1の再送 → already（不在でも二重記録されない）', r.result === 'already');
+}, { commit: true });
+let rr14 = await resultRows('900000000215');
+ok('★delivery_results 1行のまま（再送重複の穴が塞がった実証）', rr14.length === 1);
+let logs14 = await logRows('900000000215');
+ok('ログも2行のまま（不在→配送中→不在が再実行されない）', logs14.length === 2);
+await asUser(DRV1, async () => {
+  const r = (await callKey('900000000215', '完了', KEY2)).rows[0].r;
+  ok('新KEY2（日内再訪→完了）result=recorded', r.result === 'recorded');
+}, { commit: true });
+rr14 = await resultRows('900000000215');
+ok('日内再訪は正当に2行目（1=不在・2=完了）', rr14.length === 2 && rr14[0].result === '不在' && rr14[1].result === '完了');
+ok('client_request_id が両行に保存されている', rr14[0].client_request_id === KEY1 && rr14[1].client_request_id === KEY2);
+ok('status=完了（再訪の終端）', (await statusOf('900000000215')) === '完了');
+
 console.log(`\ndelivery_result pglite: ${pass} passed, ${fail} failed`);
 await db.close();
 if (fail > 0) process.exit(1);

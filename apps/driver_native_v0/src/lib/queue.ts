@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState, AppStateStatus } from 'react-native';
+import * as Crypto from 'expo-crypto';
 import { supabase } from './supabase';
 
 // 取りこぼし防止キュー：record_delivery_result rpc の呼び出しが失敗したとき、
@@ -20,6 +21,10 @@ export interface PendingResult {
   lat: number | null;
   lng: number | null;
   at: string; // 記録試行時刻（ISO・診断用）
+  // 冪等キー（PR#9レビューMED対応）: タップ1回＝UUID1個。再送は同じキーを送る＝サーバがalreadyで弾き、
+  // 「レスポンス未達→再送」で不在が二重記録される穴を塞ぐ。新しいタップ（日内再訪）は新キー＝正当に2行目。
+  // optional なのは旧バージョンのキュー残留項目（キー無し）との互換のため。
+  requestId?: string;
 }
 
 export interface RecordOutcome {
@@ -74,6 +79,7 @@ async function attemptSend(item: PendingResult): Promise<'ok' | 'permanent' | 'r
       p_result: item.result,
       p_lat: item.lat,
       p_lng: item.lng,
+      p_client_request_id: item.requestId ?? null, // 冪等キー（旧キュー残留項目はnull＝従来挙動）
     });
     if (!error) return 'ok'; // recorded/already いずれも成功扱い
     const code = errorCode(error);
@@ -91,7 +97,15 @@ export async function recordDeliveryResult(
   lat: number | null,
   lng: number | null
 ): Promise<RecordOutcome> {
-  const item: PendingResult = { trackingNumber, result, lat, lng, at: new Date().toISOString() };
+  // タップ1回＝冪等キー1個をここで発行（再送時はキュー保存済みの同じキーが使われる）
+  const item: PendingResult = {
+    trackingNumber,
+    result,
+    lat,
+    lng,
+    at: new Date().toISOString(),
+    requestId: Crypto.randomUUID(),
+  };
   const status = await attemptSend(item);
   if (status === 'ok') {
     await dequeue(trackingNumber);

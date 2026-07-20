@@ -21,6 +21,16 @@ comment on column public.delivery_results.lng is '位置情報（機微）: 同 
 create index if not exists idx_delivery_results_tracking on public.delivery_results (tracking_number);
 create index if not exists idx_delivery_results_driver_day on public.delivery_results (driver_id, recorded_at);
 
+-- 冪等キー（PR#9レビューMED対応・2026-07-20）:
+--   「サーバはcommit済みだがレスポンス到達前に通信断→キュー再送」で `不在` が二重記録される穴を塞ぐ。
+--   タップ1回＝クライアント発行UUID1個。同一UUIDの再送は already・新しいタップ（日内再訪）は新UUID＝新規記録。
+--   既存行・旧クライアントは null 許容（nullは重複チェック対象外＝互換維持）。
+alter table public.delivery_results add column if not exists client_request_id uuid;
+comment on column public.delivery_results.client_request_id is
+  '冪等キー（タップ1回＝クライアント発行UUID1個）。再送重複の排除用。null=旧クライアント/管理経由';
+create unique index if not exists uq_delivery_results_client_request
+  on public.delivery_results (client_request_id) where client_request_id is not null;
+
 -- 拠点配下の全ドライバーID（deliveries RLSのdepot分岐と同じ範囲をdrivers RLSを跨いで解決）
 -- ※ public.drivers はhq/area/driver本人のみにSELECTポリシーがあり depot分岐が無いため、
 --   ポリシー内で drivers を直接参照すると depot ロールは常に0件（fail-closed）になる。
@@ -57,11 +67,16 @@ create policy delivery_results_select on public.delivery_results
   );
 
 -- ③ 記録口 --------------------------------------------------------
+-- 旧4引数版の残骸を除去（引数追加は create or replace では別オーバーロードになるため。
+--  drop→再作成でも、下で同名5引数版に grant し直すので権限は連続する）
+drop function if exists public.record_delivery_result(text, text, double precision, double precision);
+
 create or replace function public.record_delivery_result(
-  p_tracking_number text,
-  p_result          text,
-  p_lat             double precision default null,
-  p_lng             double precision default null
+  p_tracking_number   text,
+  p_result            text,
+  p_lat               double precision default null,
+  p_lng               double precision default null,
+  p_client_request_id uuid default null
 )
 returns jsonb
 language plpgsql
@@ -74,6 +89,7 @@ declare
   v_status  text;
   v_owner   text;
   v_id      bigint;
+  v_dup     bigint;
 begin
   -- 認可: driver本人のみ（管理の訂正は record_status_transition を直接使う）
   if v_uid is null or public.my_role() <> 'driver' or v_driver is null then
@@ -100,8 +116,21 @@ begin
     raise exception 'この荷物の担当ではありません' using errcode = '42501';
   end if;
 
+  -- 冪等キー（再送の重複排除・PR#9レビューMED対応）:
+  --   同一 client_request_id が既に記録済み＝「そのタップは届いている」＝ already を返す。
+  --   deliveries の行ロック取得後に判定するため、同一UUIDの並行再送も直列化され、
+  --   敗者は勝者のcommit後にここで捕まる。新しいタップ（日内再訪）は新UUIDなので素通り＝正当に2行目。
+  if p_client_request_id is not null then
+    select r.id into v_dup from public.delivery_results r
+    where r.client_request_id = p_client_request_id;
+    if found then
+      return jsonb_build_object('result','already','tracking_number',p_tracking_number,'status',v_status);
+    end if;
+  end if;
+
   -- 冪等: 既に完了なら何もしない（二度押し無害）。完了は終端のまま。
   -- 不在は日内再訪（LOL確定2026-07-18）で再処理可＝ここでは早期returnしない（下の遷移へ進む）。
+  -- ※不在の「再送」重複は上の冪等キーが塞ぐ（キー無し=旧クライアントは従来どおり重複しうる＝READMEに既知の制限として明記）。
   if v_status = '完了' then
     return jsonb_build_object('result','already','tracking_number',p_tracking_number,'status',v_status);
   end if;
@@ -115,8 +144,8 @@ begin
   end if;
   perform public.record_status_transition_internal(p_tracking_number, p_result, '配達', null);
 
-  insert into public.delivery_results (tracking_number, driver_id, result, lat, lng, created_by)
-  values (p_tracking_number, v_driver, p_result, p_lat, p_lng, v_uid)
+  insert into public.delivery_results (tracking_number, driver_id, result, lat, lng, created_by, client_request_id)
+  values (p_tracking_number, v_driver, p_result, p_lat, p_lng, v_uid, p_client_request_id)
   returning id into v_id;
 
   return jsonb_build_object('result','recorded','id',v_id,
@@ -124,8 +153,8 @@ begin
     'gps', p_lat is not null);
 end $$;
 
-revoke execute on function public.record_delivery_result(text, text, double precision, double precision) from public;
-grant  execute on function public.record_delivery_result(text, text, double precision, double precision) to authenticated;
-comment on function public.record_delivery_result(text, text, double precision, double precision) is
-  '配達実績の記録口（8.11最小）。driver本人限定・冪等（完了は終端）・仕分済/不在→配送中→完了/不在を不可分に。'
-  '完了/不在への唯一の正規経路（record_status_transition_internal を直接呼ぶ＝MED-2対応）。SECURITY DEFINER';
+revoke execute on function public.record_delivery_result(text, text, double precision, double precision, uuid) from public;
+grant  execute on function public.record_delivery_result(text, text, double precision, double precision, uuid) to authenticated;
+comment on function public.record_delivery_result(text, text, double precision, double precision, uuid) is
+  '配達実績の記録口（8.11最小）。driver本人限定・冪等（完了=終端＋client_request_idで再送重複排除）・'
+  '仕分済/不在→配送中→完了/不在を不可分に。完了/不在への唯一の正規経路（record_status_transition_internal 直呼び＝MED-2対応）。SECURITY DEFINER';
