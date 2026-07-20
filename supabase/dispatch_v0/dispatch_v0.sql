@@ -105,7 +105,7 @@ create policy dispatch_assignments_hq on public.dispatch_assignments for select 
 --   本番DBの実体は vocab_fix_v0/migrate_functions_to_area_master_v0.sql（④）で
 --   **area_master 参照に書き換え済み**。address_master は⑤で drop 済み（存在しません）。
 --
---   ★このファイルを再実行すると④を巻き戻します。
+--   ★このファイルの再実行は、条件によっては④を巻き戻します（現状＝⑤drop後は防がれている）。
 --     ・⑤drop後（現状）＝ fail-closed：zone_rank は language sql のため address_master 不在で
 --       **作成時にエラー**になり、そこで止まる（＝巻き戻りは起きない）。
 --     ・⚠ ④実施〜⑤drop の「窓」の間だけは危険：address_master がまだ存在するため

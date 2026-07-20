@@ -127,6 +127,21 @@ from best b
 where b.tracking_number = d.tracking_number;
 */ -- ↑↑ RETIRED（§5-1 実行部ここまで・無効化）↑↑
 
+-- ⚠ 失敗モードの維持: §5-1 をコメント化しただけだと、ファイルを丸ごと実行したとき
+--   §5-1 が【静かにスキップ】され §5-2 以降に進み、「再判定したつもり」で共通IDが
+--   付いていない、という無言の誤りになる（撤去前は「テーブル不在エラー」で目立って止まっていた）。
+--   → 明示的に停止させて、正しい手順（common_id_rematch_v0.sql を先に実行）へ誘導する。
+--   ※ §5-2 以降だけを使いたい場合は、本ブロックを含めずに §5-2〜§5-4 を選択実行すること
+--     （本ファイルは元々「各ブロックを選択して個別実行」する運用・冒頭の手順書き参照）。
+do $$
+begin
+  raise exception
+    '§5-1（住所→共通IDの再判定）は撤去済みです（address_master 参照・⑤で drop）。'
+    '共通IDの再付与は common_id_assign_v0/common_id_rematch_v0.sql を先に実行してください。'
+    'そのうえで §5-2〜§5-4 だけを選択実行してください（このブロックは含めない）。'
+    using errcode = 'P0001';
+end $$;
+
 -- §5-2) 共通ID→拠点→営業所（assign_office_v0 と同一経路。新たに共通IDが付いた分だけ）
 update public.deliveries d
 set depot_code  = z.depot_code,

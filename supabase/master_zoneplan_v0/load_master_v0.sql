@@ -8,7 +8,7 @@
 
 -- ⚠⚠ RETIRED（2026-07-17・Master部分のみ）: address_master と master_staging は撤去済み（⑤）。
 --   → **このファイルは今のままでは §3（insert into master_staging）／§6（from master_staging）で落ちます**
---     （master_staging が存在しないため）。※§1 の truncate は既にコメント済み（23行目）。
+--     （master_staging が存在しないため）。※§1 の truncate は既にコメント済み（24行目）。
 --   ・全国Master の読込（§3・§6 の master_staging → address_master）は **retire**。後継は area_master_v0/。
 --   ・**ZonePlan の読込（§2・§5）は現役**（zoneplan_staging → zone_plan。dispatch_v0 が
 --     zoneplan_staging から分割閾値を読むため生きている）。
