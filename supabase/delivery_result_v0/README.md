@@ -28,8 +28,12 @@
 - **不在→再配達（日内再訪・LOL確定2026-07-18）**：`不在` は終端ではなく再処理可能な状態にした。冪等ガードは「`完了`のみ`already`」に変更し、`不在`の荷物に再度 `record_delivery_result` を呼ぶと `不在→配送中→完了/不在` の2遷移で記録し直せる（同一 `tracking_number` に `delivery_results` 2行目が積み増される・1行目は履歴として残る）。遷移そのものは `record_status_transition_internal`（`status_log_v0/record_status_transition_v0.sql`）の許可リストに `('不在','配送中')` を1本追加しただけで、`完了` からの戻し遷移は追加していない＝`完了` は引き続き終端。
 - **MED-2対応（2026-07-18監査）**：本関数は内部の状態遷移呼び出し先を `record_status_transition`（公開ラッパー・authenticatedへgrant）ではなく非公開の `record_status_transition_internal`（authenticatedへgrant無し）に変更した。これにより「driverが `record_status_transition` を直接RPC呼び出しして完了/不在へ到達する」経路を公開ラッパー側で拒否しつつ、`record_delivery_result`（本関数）からの内部呼び出しだけは所有者権限で通る＝完了/不在の記録口は事実上この関数一本に固定される。設計の詳細・根拠は `status_log_v0/README.md`「MED-2対応」節を参照。
 - **GPS null許容**：`lat`/`lng` は NULL 許容。位置情報取得の拒否/失敗でも「完了/不在」の記録自体は止めない（MVPの命綱＝タップが必ずDBに残る）。戻り値 `gps` フィールド（true/false）でアプリ側が取得成否を判別できるようにした。
-- **冪等**：既に `完了`/`不在` の荷物に再度同じ関数を呼んでも `{"result":"already"}` を返すだけで行は増えない（二度押し・オフライン再送キューからの再送も無害）。**並行呼び出し**（同時二度押し・オフライン再送の同時到達）も同じ結果になるよう、`deliveries` の対象行を `select … for update` で行ロックしてから読む。敗者は勝者のcommitまで待機し、その後は終端status（完了/不在）を読んで冪等ガードに落ちる＝レースでも二重遷移・二重記録が起きない。
-- **`delivery_results` に一意制約はあえて付けない**：`(tracking_number)` や `(tracking_number, result)` へのUNIQUE制約は将来の「再配達（不在→再訪で同一問合番号に2件目の実績が付く）」を妨げるため入れていない。二重INSERTは一意制約ではなく、上記の行ロック＋`deliveries.status`の冪等ガード（既に完了/不在なら`record_status_transition`を呼ばずINSERTもしない）で防ぐ。
+- **冪等（2段構え・PR#9レビューMED対応で改訂 2026-07-20）**：
+  - **①statusガード（`完了`のみ）**：既に `完了` の荷物への再呼び出しは `{"result":"already"}`（二度押し無害・完了は終端）。**`不在`はここでは弾かない**（日内再訪で再処理可能にするため＝上の「不在→再配達」参照）。
+  - **②冪等キー `client_request_id`**：「サーバはcommit済みだがレスポンス到達前に通信断→キュー再送」のケースは①では防げず、**`不在`が二重記録される穴があった**（旧版READMEはここを「再送も無害」と誤記＝レビュー指摘）。恒久対処として、タップ1回＝クライアント発行UUID1個を記録に添付し、同一UUIDの再送は `already`・新しいタップ（日内再訪）は新UUIDで正当に2行目、として**再送重複と正当な再訪をデータ上で完全に区別**できるようにした。
+  - **並行呼び出し**（同時二度押し・再送の同時到達）は `deliveries` の対象行 `select … for update` で直列化。敗者は勝者のcommit後に①または②のガードに落ちる＝レースでも二重記録は起きない。
+  - **既知の制限**：`client_request_id` が null の呼び出し（旧クライアント・管理経由）は②の対象外＝不在の再送重複が理論上起こりうる。現行アプリは常にUUIDを発行するため実運用では発生しない。
+- **`delivery_results` の一意制約は `client_request_id` のみ（部分UNIQUE）**：`(tracking_number)` 系のUNIQUEは「再配達（不在→再訪で同一問合番号に2件目の実績）」を妨げるため付けない。二重INSERT防止は行ロック＋①statusガード（完了）＋②冪等キー（再送）の組み合わせで担い、`client_request_id` の部分UNIQUE（null除外）が最後の砦として効く。
 - **戻り値の契約**：`recorded`（新規記録）は `id`/`gps` を含むが、`already`（冪等ヒット）は `result`/`tracking_number`/`status` のみで `id`/`gps` を**含まない**。クライアントは `result` フィールドで分岐すること（`already` も呼び出しとしては成功=例外なし。UI上はどちらも「記録済み」として扱ってよい）。
 - **第1.5弾（本v0の範囲外）**：`photo_path`（置き配写真POD）・常時位置追跡・不在理由コード・バーコード照合（8.5）は次弾で追加予定。`delivery_results` 表に列を足す形で拡張できるよう、記録口の戻り値は `jsonb` にして将来のフィールド追加に備えている。
 
