@@ -83,25 +83,35 @@ export default function SwipeToComplete({ label = 'スワイプで完了', onCom
   });
 
   return (
+    // 当たり判定はバーの見た目より上下14px/左右8px広い透明ラッパーで受ける。
+    // 「緑のバーを正確になぞらないと反応しない」＝指がわずかに外れて始まると無反応、の対策。
     <View
-      style={[styles.track, disabled && styles.trackDisabled]}
-      onLayout={(e) => setTrackWidth(e.nativeEvent.layout.width)}
-      // 掴み判定はトラック全体（バーのどこから撫でてもハンドルが追従する。
-      // ハンドル玉46pxだけだと「触ったのに反応せん」が起きる＝現場でシビアすぎる）
+      style={styles.touchArea}
       {...(disabled ? {} : panResponder.panHandlers)}
     >
-      <Animated.View style={[styles.fill, { width: fillWidth }]} />
-      <Animated.Text style={[styles.label, { opacity: labelOpacity }]}>
-        {`→ ${label}`}
-      </Animated.Text>
-      <Animated.View style={[styles.handle, { transform: [{ translateX }] }]}>
-        <Ionicons name="checkmark" size={22} color={colors.white} />
-      </Animated.View>
+      <View
+        style={[styles.track, disabled && styles.trackDisabled]}
+        onLayout={(e) => setTrackWidth(e.nativeEvent.layout.width)}
+      >
+        <Animated.View style={[styles.fill, { width: fillWidth }]} />
+        <Animated.Text style={[styles.label, { opacity: labelOpacity }]}>
+          {`→ ${label}`}
+        </Animated.Text>
+        <Animated.View style={[styles.handle, { transform: [{ translateX }] }]}>
+          <Ionicons name="checkmark" size={22} color={colors.white} />
+        </Animated.View>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  touchArea: {
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    marginVertical: -14,
+    marginHorizontal: -8,
+  },
   track: {
     height: HANDLE_SIZE + TRACK_PADDING * 2,
     borderRadius: radius.pill,
