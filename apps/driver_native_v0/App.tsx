@@ -263,6 +263,12 @@ function AppInner() {
       if (tab !== 'delivery') showToast('先に出勤してください');
       return;
     }
+    // 退勤後は「本日の実績」のみ閲覧可。配達・地図はロック（労務のけじめ＋誤操作防止）。
+    // 再び操作するには「出勤画面へ戻る」→再出勤する。
+    if (clockedOut && tab !== 'today') {
+      showToast('退勤済みです。操作するには再出勤してください');
+      return;
+    }
     setActiveTab(tab);
   };
 
