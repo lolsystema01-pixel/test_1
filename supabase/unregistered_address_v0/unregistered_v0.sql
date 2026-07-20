@@ -102,7 +102,9 @@ where tracking_number = '279113440026';
 --   経緯: supabase/vocab_fix_v0/README.md ／ docs/handoff_status_v0.md §3.1
 -- -------------------------------------------------------------
 
--- §5-1) 住所→共通ID（正規化して前方一致・最長一致採用。match_v0 と同一規則）  ← RETIRED（上記）
+-- §5-1) 住所→共通ID（正規化して前方一致・最長一致採用。match_v0 と同一規則）  ← RETIRED（実行部を無効化）
+/* ↓↓ RETIRED（2026-07-17）: address_master 参照（撤去済み⑤）。後継＝common_id_rematch_v0.sql。
+   drop後は実行時エラー＝fail-closed。§5-2以降と §1〜§4・§6 は現役（この無効化は §5-1 のみ）。
 with norm as (
   select tracking_number, public.normalize_addr(address) as na
   from public.deliveries
@@ -123,6 +125,7 @@ update public.deliveries d
 set common_id = b.common_id
 from best b
 where b.tracking_number = d.tracking_number;
+*/ -- ↑↑ RETIRED（§5-1 実行部ここまで・無効化）↑↑
 
 -- §5-2) 共通ID→拠点→営業所（assign_office_v0 と同一経路。新たに共通IDが付いた分だけ）
 update public.deliveries d

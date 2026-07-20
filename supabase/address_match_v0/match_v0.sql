@@ -22,6 +22,8 @@
 -- =============================================================
 
 
+/* ↓↓ RETIRED（2026-07-17）: 以下②の実行部を無効化。address_master 参照（撤去済み⑤）＋
+   実装は common_id_assign_v0.4 に置換済み。drop後は実行時エラー＝fail-closed。設計意図の参照用に本文は残す。
 -- =====================  A. dry-run（書き込まない）  ==========
 -- 丁目一致／TownKeyフォールバック一致／不一致 の件数を出す。
 with norm as (
@@ -95,3 +97,4 @@ select
   (select count(*) from public.deliveries where common_id is null)     as unmatched,            -- 2
   (select count(*) from public.unregistered_addresses)                 as unregistered,         -- 2
   (select count(*) from public.deliveries where status = '保留')        as held;                 -- 2
+*/ -- ↑↑ RETIRED（実行部ここまで・無効化）↑↑

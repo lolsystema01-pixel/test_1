@@ -106,9 +106,12 @@ create policy dispatch_assignments_hq on public.dispatch_assignments for select 
 --   **area_master 参照に書き換え済み**。address_master は⑤で drop 済み（存在しません）。
 --
 --   ★このファイルを再実行すると④を巻き戻します。
---     ・zone_rank は language sql のため、address_master 不在で **作成時にエラー**（＝そこで止まる）。
---     ・仮に address_master を復活させてから実行すると、旧版が上書きされ、
---       新語彙（実データ）の市名が引けず「エラー無しで市名NULL・同一市判定不成立」に戻る。
+--     ・⑤drop後（現状）＝ fail-closed：zone_rank は language sql のため address_master 不在で
+--       **作成時にエラー**になり、そこで止まる（＝巻き戻りは起きない）。
+--     ・⚠ ④実施〜⑤drop の「窓」の間だけは危険：address_master がまだ存在するため
+--       **作成時エラーにならず、旧版が静かに上書き**され④が巻き戻る（新語彙の市名が引けず
+--       「エラー無しで市名NULL・同一市判定不成立」に戻る）。この窓では本ファイルを実行しないこと。
+--     ・drop後に仮に address_master を復活させてから実行した場合も同じ劣化になる。
 --
 --   配車ロジックを直すときは **migrate_functions_to_area_master_v0.sql の側を正** とし、
 --   このファイルの関数定義は履歴として読むだけにしてください。
