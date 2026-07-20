@@ -38,6 +38,20 @@ alter table public.offices add column if not exists gdrive_folder_url text;
 comment on column public.offices.gdrive_folder_url is
   '持出バッグリストのGドライブ保存先フォルダURL（§12.14・営業所別）。NULL＝初期設定 未完（初回ゲートの判定に流用・専用フラグ列は作らない）。消費側＝出力の保存先 v0.3（§12.10.5）';
 
+-- 空文字を作れないようにする（冪等）。
+--   理由: 未完の表現は **NULL のみ** に限定する。空文字を許すと
+--     ・ゲートは `is null` 判定なので「完了」とみなして初期設定画面を出さない一方、
+--     ・保存口の area 分岐は `v_current is null` のみ許可なので area は直せない
+--   ＝「画面は出ないのに設定もできない」宙づり状態になる（postgres 直UPDATEで作れてしまう）。
+--   → 不正な状態を表現できなくする（CHECK）ことで根本から塞ぐ。
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'offices_gdrive_folder_url_chk') then
+    alter table public.offices add constraint offices_gdrive_folder_url_chk
+      check (gdrive_folder_url is null or btrim(gdrive_folder_url) <> '');
+  end if;
+end $$;
+
 
 -- =============================================================
 -- §2. 保存口（SECURITY DEFINER・初回設定の2項目）
@@ -84,10 +98,16 @@ begin
       using errcode = '42501';
   end if;
 
-  -- 入力検証（画面と二重。NULL/空文字は「未完」のままにしないため必須）
+  -- 入力検証（画面と二重＝多層防御。RPC を直接叩かれても同じ判定が効くよう、
+  --   画面側と**同じ条件**にしてある。片方だけ緩いと検証が形骸化するため）
   if p_gdrive_folder_url is null or btrim(p_gdrive_folder_url) = '' then
     raise exception '持出バッグリストのフォルダURLは必須です（空にはできません）'
       using errcode = '22023';
+  end if;
+  if btrim(p_gdrive_folder_url) !~ '^https://drive\.google\.com/' then
+    raise exception
+      'GドライブのフォルダURLを指定してください（https://drive.google.com/… で始まる必要があります）: %',
+      p_gdrive_folder_url using errcode = '22023';
   end if;
   if p_printer_model is null or btrim(p_printer_model) = '' then
     raise exception 'ラベルプリンタ機種は必須です' using errcode = '22023';

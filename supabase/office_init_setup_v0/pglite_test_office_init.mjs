@@ -114,12 +114,45 @@ console.log('D. 入力検証');
   ok('D. URL が空文字は拒否（未完のまま残さない）', (await save('C01', '   ', 'Brother TD-2350')) !== null);
   ok('D. 機種が CHECK 許容外は拒否', (await save('C01', 'https://drive.google.com/drive/folders/y', 'Epson')) !== null);
   ok('D. 機種が NULL は拒否', (await save('C01', 'https://drive.google.com/drive/folders/y', null)) !== null);
+  // 画面側の検証（^https://drive.google.com/）と同条件を保存口にも持たせる＝RPC直叩きでも素通りしない
+  ok('D. Drive 以外のURLは拒否（RPC直叩きでも画面と同じ判定が効く）',
+     (await save('C01', 'https://example.com/folders/y', 'Brother TD-2350')) !== null);
+  ok('D. URLらしくない文字列も拒否', (await save('C01', 'あとで入れる', 'Brother TD-2350')) !== null);
+  // ここまで全て拒否されている＝1件も書き込まれていないことを先に確認する
   ok('D. 拒否された C01 は「未完」のまま',
      (await one(db, `select gdrive_folder_url from public.offices where office_code='C01'`)).gdrive_folder_url === null);
+  ok('D. /u/0/ 付きの実URLは通る（アカウント番号付きでも Drive なら可）',
+     (await save('C01', 'https://drive.google.com/drive/u/0/folders/abc', 'Brother TD-2350')) === null);
+  // C01 は直前のテストで一度保存されている＝area では2回目になるため hq で上書きして確認
+  await as('hq', null);
   ok('D. 正しい入力は通り、前後の空白は除去される',
      (await save('C01', '  https://drive.google.com/drive/folders/CHITA  ', '汎用サーマル')) === null
      && (await one(db, `select gdrive_folder_url from public.offices where office_code='C01'`))
           .gdrive_folder_url === 'https://drive.google.com/drive/folders/CHITA');
+}
+
+// ---- D-2. 空文字を DB に作れないこと（CHECK 制約）----
+//   空文字を許すと「ゲートは完了とみなすのに area は直せない」宙づり状態になるため、
+//   不正な状態を表現できなくする。postgres 直UPDATE でも作れないことを確認する。
+console.log('D-2. 空文字の封じ込め（CHECK）');
+{
+  const chk = await one(db, `select count(*)::int as n from pg_constraint
+                             where conname = 'offices_gdrive_folder_url_chk'`);
+  ok('D-2. CHECK 制約 offices_gdrive_folder_url_chk がある', chk.n === 1);
+
+  let e1 = null;
+  try { await db.exec(`update public.offices set gdrive_folder_url = '' where office_code='A01'`); }
+  catch (e) { e1 = e.message; }
+  ok('D-2. postgres 直UPDATE でも空文字にできない', e1 !== null);
+
+  let e2 = null;
+  try { await db.exec(`update public.offices set gdrive_folder_url = '   ' where office_code='A01'`); }
+  catch (e) { e2 = e.message; }
+  ok('D-2. 空白のみもできない（btrim 判定）', e2 !== null);
+
+  ok('D-2. NULL には戻せる（未完に戻す運用は可能）',
+     await db.exec(`update public.offices set gdrive_folder_url = null where office_code='A01'`)
+       .then(() => true).catch(() => false));
 }
 
 // ---- E. 保存後は完了＝ゲートが出ない ----
