@@ -7,13 +7,12 @@
 -- =============================================================
 
 -- ⚠⚠ RETIRED（2026-07-17・Master部分のみ）: address_master と master_staging は撤去済み（⑤）。
---   → **このファイルは今のままでは §3（insert into master_staging）／§6（from master_staging）で落ちます**
---     （master_staging が存在しないため）。※§1 の truncate は既にコメント済み（24行目）。
+--   → **Master 側（§1 truncate ／ §3 staging投入 ／ §6 読込）は無効化済み**なので、
+--     このファイルは**フレッシュ環境でもそのまま丸ごと実行できます**（ZonePlan だけが入る）。
 --   ・全国Master の読込（§3・§6 の master_staging → address_master）は **retire**。後継は area_master_v0/。
 --   ・**ZonePlan の読込（§2・§5）は現役**（zoneplan_staging → zone_plan。dispatch_v0 が
 --     zoneplan_staging から分割閾値を読むため生きている）。
---   ★ zone_plan を再ロードしたい場合は、master_staging 側の行（§3・§6）を
---     読み飛ばし、ZonePlan の §2・§5 だけを選択実行してください。
+--   ・§7 の件数表示に address_master 行は出ません（§6 を retire したため）。
 --   ⚠ ただし zone_plan は②で **新語彙1,653件** が入っています。このファイルの ZonePlan seed は
 --     **旧語彙の愛知ダミー8件**（§4 のハードコード）なので、素直に流すと旧語彙が復活し、
 --     ゲート seq 7・8 が再び赤くなります（⑤の案aで掃除した行が戻る）。
@@ -36,7 +35,9 @@ insert into public.zoneplan_staging
  ('TKI_C_03_07','D02','D02','東海市','3','7','東海','知多,大府','206','7'),
  ('CTA_C_06_13','D02','D02','知多市','6','13','知多','東海,大府,半田','153','7');
 
--- §3. 全国Master CSV を staging へ ----------------------------
+-- §3. 全国Master CSV を staging へ ----------------------------  ← RETIRED（無効化）
+/* ↓↓ RETIRED（2026-07-17）: master_staging / address_master は撤去済み（語彙是正⑤）。
+   後継は area_master（area_master_v0/）。★フレッシュ環境で復活させないこと。
 insert into public.master_staging
   (depot, town_key, prefecture, municipality, town, chome, common_id, valid) values
  ('D01','愛知県|岡崎市|箱柳町','愛知県','岡崎市','箱柳町','','OKZ_C_01_08','有効'),
@@ -53,6 +54,7 @@ insert into public.master_staging
  ('D02','愛知県|東海市|荒尾町','愛知県','東海市','荒尾町','','TKI_C_03_07','有効'),
  ('D02','愛知県|知多市|八幡','愛知県','知多市','八幡','','CTA_C_06_13','有効'),
  ('D02','愛知県|知多市|新知','愛知県','知多市','新知','','CTA_C_06_13','有効');
+*/ -- ↑↑ RETIRED（§3 ここまで・無効化）↑↑
 
 
 -- §4. 件数記録用の一時テーブル --------------------------------
@@ -91,7 +93,8 @@ select 'zone_plan',
        (select count(*) from zsrc) - (select count(*) from zins);
 
 
--- §6. 全国Master を読込（TownKeyで重複排除）-------------------
+-- §6. 全国Master を読込（TownKeyで重複排除）-------------------  ← RETIRED（無効化）
+/* ↓↓ RETIRED（2026-07-17）: address_master は撤去済み（語彙是正⑤）。後継は area_master。
 with msrc as (
   select distinct on (s.town_key)
     s.town_key,
@@ -118,10 +121,10 @@ select 'address_master',
        (select count(*) from msrc),
        (select count(*) from mins),
        (select count(*) from msrc) - (select count(*) from mins);
+*/ -- ↑↑ RETIRED（§6 ここまで・無効化）↑↑
 
 
 -- §7. 読込件数を表示（1回目=投入 / 2回目=全件スキップ）---------
 select * from _load_counts order by tbl;
--- 期待:
+-- 期待（※ address_master 行は §6 を retire したため出ません）:
 --   zone_plan      : csv 8  / unique 8  / inserted 8(1回目)・0(2回目) / skipped 0・8
---   address_master : csv 14 / unique 14 / inserted 14(1回目)・0(2回目)/ skipped 0・14

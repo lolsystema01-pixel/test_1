@@ -8,7 +8,7 @@ delete from public.work_schedules;
 delete from public.delivery_index;
 delete from public.drivers;
 delete from public.deliveries;
-delete from public.address_master;
+-- delete from public.address_master;   -- RETIRED（2026-07-17）: address_master は撤去済み（語彙是正⑤）
 delete from public.offices;
 delete from public.zone_plan;
 delete from public.depots;
@@ -28,9 +28,12 @@ insert into public.zone_plan (common_id, zone_no, adjacent_zones) values
   ('OKZ_C_01_08', 'Z1', 'TYT_C_25_36'),
   ('TYT_C_25_36', 'Z2', 'OKZ_C_01_08');
 
-insert into public.address_master (town_key, municipality, town, common_id) values
-  ('愛知県|岡崎市|箱柳町', '愛知県岡崎市', '箱柳町', 'OKZ_C_01_08'),
-  ('愛知県|豊田市|西町',   '愛知県豊田市', '西町',   'TYT_C_25_36');
+-- ⚠ RETIRED（2026-07-17）: address_master は撤去済み（語彙是正⑤）。後継は area_master（area_master_v0/）。
+--   ★フレッシュ環境ではこの insert を復活させないこと（旧マスタ復活の入口）。
+--   住所→共通IDのダミーが要る場合は area_master_v0/ の取込を使う。
+-- insert into public.address_master (town_key, municipality, town, common_id) values
+--   ('愛知県|岡崎市|箱柳町', '愛知県岡崎市', '箱柳町', 'OKZ_C_01_08'),
+--   ('愛知県|豊田市|西町',   '愛知県豊田市', '西町',   'TYT_C_25_36');
 
 -- ② 配送データ（荷物）--------------------------------------
 --    office_code は A01/C01（営業所マスタに存在）→ FK成立を確認できる。
