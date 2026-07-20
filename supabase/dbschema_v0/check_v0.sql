@@ -4,12 +4,13 @@
 -- =============================================================
 
 -- A. 5グループのテーブルが作成できているか --------------------
---    8テーブルが並べば OK（depots/offices/zone_plan/address_master/
+--    7テーブルが並べば OK（depots/offices/zone_plan/
 --    deliveries/delivery_index/drivers/work_schedules）
+--    ※ address_master は撤去済み（語彙是正⑤・2026-07-17）＝一覧から外した。後継は area_master。
 select table_name
 from information_schema.tables
 where table_schema = 'public'
-  and table_name in ('depots','offices','zone_plan','address_master',
+  and table_name in ('depots','offices','zone_plan',
                      'deliveries','delivery_index','drivers','work_schedules')
 order by table_name;
 
@@ -59,7 +60,7 @@ where table_schema = 'public' and table_name = 'deliveries'
 select 'depots' as t, count(*) from public.depots
 union all select 'offices',        count(*) from public.offices
 union all select 'zone_plan',      count(*) from public.zone_plan
-union all select 'address_master', count(*) from public.address_master
+-- union all select 'address_master', count(*) from public.address_master  -- RETIRED（⑤で撤去）
 union all select 'deliveries',     count(*) from public.deliveries
 union all select 'delivery_index', count(*) from public.delivery_index
 union all select 'drivers',        count(*) from public.drivers

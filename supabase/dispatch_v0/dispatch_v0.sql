@@ -100,7 +100,26 @@ create policy dispatch_drivers_hq     on public.dispatch_drivers     for select 
 create policy dispatch_zones_hq       on public.dispatch_zones       for select to authenticated using ( public.my_role() = 'hq' );
 create policy dispatch_assignments_hq on public.dispatch_assignments for select to authenticated using ( public.my_role() = 'hq' );
 
+-- =============================================================
+-- ⚠⚠ RETIRED（2026-07-17）: この下の zone_rank / dispatch_build は **旧版** です。
+--   本番DBの実体は vocab_fix_v0/migrate_functions_to_area_master_v0.sql（④）で
+--   **area_master 参照に書き換え済み**。address_master は⑤で drop 済み（存在しません）。
+--
+--   ★このファイルの再実行は、条件によっては④を巻き戻します（現状＝⑤drop後は防がれている）。
+--     ・⑤drop後（現状）＝ fail-closed：zone_rank は language sql のため address_master 不在で
+--       **作成時にエラー**になり、そこで止まる（＝巻き戻りは起きない）。
+--     ・⚠ ④実施〜⑤drop の「窓」の間だけは危険：address_master がまだ存在するため
+--       **作成時エラーにならず、旧版が静かに上書き**され④が巻き戻る（新語彙の市名が引けず
+--       「エラー無しで市名NULL・同一市判定不成立」に戻る）。この窓では本ファイルを実行しないこと。
+--     ・drop後に仮に address_master を復活させてから実行した場合も同じ劣化になる。
+--
+--   配車ロジックを直すときは **migrate_functions_to_area_master_v0.sql の側を正** とし、
+--   このファイルの関数定義は履歴として読むだけにしてください。
+--   経緯: supabase/vocab_fix_v0/README.md ／ 確認結果メモ.md
+-- =============================================================
+
 -- 0-4) 隣接ランク（1=同一ゾーン / 2=同一市 / 3=隣接 / 99=対象外）---------------
+--   ※ RETIRED（上記）。実体は④で area_master 参照へ移行済み。
 create or replace function public.zone_rank(a text, b text)
 returns integer language sql stable as $$
   select case
