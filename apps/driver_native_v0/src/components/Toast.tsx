@@ -26,7 +26,7 @@ export default function Toast({ toast }: Props) {
         Animated.timing(opacity, { toValue: 0, duration: 220, useNativeDriver: true }),
         Animated.timing(translateY, { toValue: 12, duration: 220, useNativeDriver: true }),
       ]).start();
-    }, 1600);
+    }, toast.duration ?? 1600);
 
     return () => {
       if (hideTimer.current) clearTimeout(hideTimer.current);

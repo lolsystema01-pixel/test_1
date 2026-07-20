@@ -33,4 +33,5 @@ export interface Counts {
 export interface ToastState {
   id: number;
   message: string;
+  duration?: number; // 既定1.6秒（省略時）。特定の重要通知だけ長めに表示する用途。
 }

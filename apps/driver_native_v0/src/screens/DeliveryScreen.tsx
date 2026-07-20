@@ -275,7 +275,6 @@ export default function DeliveryScreen({
                       <View style={styles.stopWinPill}>
                         <Text style={styles.stopWinPillText}>{s.window}</Text>
                       </View>
-                      <Ionicons name="chevron-forward" size={16} color={colors.ink300} />
                     </View>
                   </Reveal>
                 </View>
@@ -302,6 +301,7 @@ export default function DeliveryScreen({
                     <Text style={styles.absentRowSub}>{recipientLabel(s.recipient)}</Text>
                   </View>
                   <Pressable
+                    hitSlop={8}
                     style={({ pressed }) => [styles.redispatchBtn, pressed && styles.pressedSubtle]}
                     onPress={() => handleRedispatch(s)}
                   >
@@ -470,7 +470,7 @@ const styles = StyleSheet.create({
     marginTop: space.md,
     alignItems: 'flex-start',
   },
-  memoText: { flex: 1, ...type.caption, color: colors.brand700, lineHeight: 18 },
+  memoText: { flex: 1, ...type.caption, color: colors.brand700, fontSize: 14, lineHeight: 20 },
 
   warnBox: {
     flexDirection: 'row',
@@ -483,7 +483,7 @@ const styles = StyleSheet.create({
     padding: space.sm,
     marginTop: space.sm,
   },
-  warnText: { flex: 1, ...type.caption, color: colors.warn, lineHeight: 18 },
+  warnText: { flex: 1, ...type.caption, color: colors.warn, fontSize: 14, lineHeight: 20 },
 
   quickActions: { flexDirection: 'row', gap: space.sm, marginTop: space.base },
   quickBtn: {
@@ -605,7 +605,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     paddingVertical: 8,
     paddingHorizontal: space.md,
-    minHeight: 36,
+    minHeight: 44,
   },
   redispatchBtnText: { ...type.label, color: colors.brand700 },
 });

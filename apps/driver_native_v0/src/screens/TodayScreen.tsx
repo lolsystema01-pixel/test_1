@@ -204,7 +204,7 @@ const styles = StyleSheet.create({
   },
   tileValueRow: { flexDirection: 'row', alignItems: 'baseline' },
   tileValue: { ...type.display, fontSize: 28, lineHeight: 32, color: colors.ink900 },
-  tileUnit: { ...type.metric, fontSize: 13, color: colors.ink400, marginLeft: 2 },
+  tileUnit: { ...type.metric, fontSize: 13, color: colors.ink500, marginLeft: 2 },
   tileLabel: { ...type.label, color: colors.ink500, marginTop: 2 },
 
   durationCard: {

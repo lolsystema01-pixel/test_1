@@ -6,10 +6,12 @@ import {
   StyleProp,
   StyleSheet,
   Text,
+  Vibration,
   View,
   ViewStyle,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { Ionicons } from '@expo/vector-icons';
 import {
   SafeAreaProvider,
   SafeAreaView,
@@ -59,6 +61,8 @@ function AppInner() {
 
   const [stops, setStops] = useState<Stop[]>(() => (isLiveMode ? [] : generateStops()));
   const [routeLoaded, setRouteLoaded] = useState(!isLiveMode);
+  // ルート取得の失敗（0件配達とは区別する）。取得成功時は必ずfalseに戻す。
+  const [routeLoadError, setRouteLoadError] = useState(false);
 
   const [activeTab, setActiveTab] = useState<TabKey>('delivery');
   const [clockedIn, setClockedIn] = useState(false);
@@ -67,8 +71,8 @@ function AppInner() {
   const [clockOutTime, setClockOutTime] = useState<Date | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
 
-  const showToast = (message: string) => {
-    setToast({ id: Date.now(), message });
+  const showToast = (message: string, duration?: number) => {
+    setToast({ id: Date.now(), message, duration });
   };
 
   // resolve() を保持しておき、「再試行」ボタンから同じ解決処理を呼べるようにする。
@@ -125,27 +129,42 @@ function AppInner() {
     void resolveAuthRef.current();
   };
 
+  // loadRoute() を保持しておき、専用エラー画面の「再試行」から同じ処理を呼べるようにする。
+  const routeLoadRef = useRef<() => Promise<void>>(async () => {});
+
   // --- 当日ルート取得（LIVEモード・signedIn後） ---
   useEffect(() => {
     if (!isLiveMode) return;
     if (authStatus !== 'signedIn') return;
     let active = true;
-    (async () => {
+
+    const loadRoute = async () => {
       try {
         const rows = await fetchTodayRoute();
         if (!active) return;
         setStops(rows);
+        setRouteLoadError(false);
       } catch {
         if (!active) return;
+        setRouteLoadError(true);
         showToast('本日のルート取得に失敗しました');
       } finally {
         if (active) setRouteLoaded(true);
       }
-    })();
+    };
+
+    routeLoadRef.current = loadRoute;
+    void loadRoute();
+
     return () => {
       active = false;
     };
   }, [authStatus]);
+
+  const handleRetryRoute = () => {
+    setRouteLoaded(false);
+    void routeLoadRef.current();
+  };
 
   // --- 取りこぼし防止キューの自動再送（LIVEモードのみ・アプリforeground復帰時） ---
   useEffect(() => {
@@ -221,7 +240,8 @@ function AppInner() {
       setStops((prev) =>
         prev.map((s) => (s.trackingNumber === trackingNumber ? { ...s, status: '未処理' } : s))
       );
-      showToast(`⚠️ ${outcome.message ?? '記録に失敗しました'}`);
+      Vibration.vibrate([0, 200, 100, 200]);
+      showToast(`⚠️ ${outcome.message ?? '記録に失敗しました'}`, 6000);
       return; // 完了自体が成立しなかった＝写真も紐付ける対象が無いので送らない
     }
     // 'ok' は既存のトースト（完了/不在タップ時）でカバー済み。'queued' はサイレント（自動再送）。
@@ -289,6 +309,8 @@ function AppInner() {
     content = <AuthErrorScreen onRetry={handleRetryAuth} onSignOut={handleSignOut} />;
   } else if (isLiveMode && !routeLoaded) {
     content = <CenteredMessage label="本日のルートを取得しています…" showSpinner />;
+  } else if (isLiveMode && routeLoadError) {
+    content = <RouteErrorScreen onRetry={handleRetryRoute} />;
   } else if (!clockedIn) {
     content = (
       <ClockInScreen
@@ -415,6 +437,27 @@ function AuthErrorScreen({ onRetry, onSignOut }: { onRetry: () => void; onSignOu
   );
 }
 
+// 当日ルートの取得失敗専用（0件配達＝正常な「完了！」表示とは分離する）。再試行を主動線にする。
+function RouteErrorScreen({ onRetry }: { onRetry: () => void }) {
+  return (
+    <View style={styles.centered}>
+      <View style={styles.routeErrorIconCircle}>
+        <Ionicons name="cloud-offline-outline" size={34} color={colors.warn} />
+      </View>
+      <Text style={styles.centeredTitle}>本日のルートを取得できませんでした</Text>
+      <Text style={styles.centeredText}>
+        電波状況をご確認のうえ、もう一度お試しください。
+      </Text>
+      <Pressable
+        style={({ pressed }) => [styles.retryBtn, pressed && styles.retryBtnPressed]}
+        onPress={onRetry}
+      >
+        <Text style={styles.retryBtnText}>再試行</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 // 開発・検証用の小さな表示（DEMO=モックデータ／LIVE=Supabase接続）。任意・軽量。
 function ModeBadge({ topInset }: { topInset: number }) {
   return (
@@ -446,6 +489,15 @@ const styles = StyleSheet.create({
   },
   centeredTitle: { ...type.h2, color: colors.ink900, marginBottom: space.sm },
   centeredText: { ...type.body, color: colors.ink500, textAlign: 'center', lineHeight: 20 },
+  routeErrorIconCircle: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: colors.warnSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: space.md,
+  },
   signOutBtn: {
     marginTop: space.xl,
     minHeight: 48,

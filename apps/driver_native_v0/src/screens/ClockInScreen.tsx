@@ -125,7 +125,7 @@ const styles = StyleSheet.create({
     marginTop: space.md,
     paddingHorizontal: space.xs,
   },
-  gpsNoteText: { flex: 1, ...type.caption, color: colors.ink400, lineHeight: 16 },
+  gpsNoteText: { flex: 1, ...type.caption, color: colors.ink500, lineHeight: 16 },
   checkCard: {
     width: '100%',
     backgroundColor: colors.surface,

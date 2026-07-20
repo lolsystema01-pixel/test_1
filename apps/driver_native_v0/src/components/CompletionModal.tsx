@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, elevation, radius, space, type } from '../theme';
 import { Stop } from '../types';
 
@@ -31,16 +32,20 @@ export default function CompletionModal({
   onConfirmDropoff,
   onCancel,
 }: Props) {
+  const insets = useSafeAreaInsets();
   const [step, setStep] = useState<Step>('choice');
   // 3枠固定（null=未撮影）。indexがそのままseq-1（Storageパスの{seq}に対応）。
   const [photos, setPhotos] = useState<(string | null)[]>([null, null, null]);
   const [permissionDenied, setPermissionDenied] = useState(false);
+  // 手渡し＝選択→確定の2段階（誤タップでの即確定を防ぐ）。
+  const [selectedHandoff, setSelectedHandoff] = useState(false);
 
   useEffect(() => {
     if (visible) {
       setStep('choice');
       setPhotos([null, null, null]);
       setPermissionDenied(false);
+      setSelectedHandoff(false);
     }
   }, [visible]);
 
@@ -71,12 +76,24 @@ export default function CompletionModal({
     onConfirmDropoff(photos.filter((p): p is string => p !== null));
   };
 
+  // 撮影済み写真が1枚以上あるときは破棄確認を挟む（X・背景タップ・onRequestCloseの共通経路）。
+  const attemptCancel = () => {
+    if (photoCount > 0) {
+      Alert.alert('写真を破棄しますか？', '撮影した写真は保存されません', [
+        { text: '撮り直しに戻る', style: 'cancel' },
+        { text: '破棄して閉じる', style: 'destructive', onPress: onCancel },
+      ]);
+      return;
+    }
+    onCancel();
+  };
+
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
-      <Pressable style={styles.backdrop} onPress={onCancel} />
-      <View style={styles.sheet}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={attemptCancel}>
+      <Pressable style={styles.backdrop} onPress={attemptCancel} />
+      <View style={[styles.sheet, { paddingBottom: space.xxl + insets.bottom }]}>
         <View style={styles.grabber} />
-        <Pressable style={styles.closeBtn} onPress={onCancel} hitSlop={10}>
+        <Pressable style={styles.closeBtn} onPress={attemptCancel} hitSlop={10}>
           <Ionicons name="close" size={20} color={colors.ink400} />
         </Pressable>
 
@@ -92,8 +109,12 @@ export default function CompletionModal({
             ) : null}
 
             <Pressable
-              style={({ pressed }) => [styles.optionRow, pressed && styles.optionRowPressed]}
-              onPress={onSelectHandoff}
+              style={({ pressed }) => [
+                styles.optionRow,
+                selectedHandoff && styles.optionRowSelected,
+                pressed && styles.optionRowPressed,
+              ]}
+              onPress={() => setSelectedHandoff(true)}
             >
               <View style={[styles.optionIcon, { backgroundColor: colors.brand100 }]}>
                 <Ionicons name="hand-left-outline" size={22} color={colors.brand700} />
@@ -102,7 +123,11 @@ export default function CompletionModal({
                 <Text style={styles.optionTitle}>手渡し</Text>
                 <Text style={styles.optionSub}>対面でお渡しします</Text>
               </View>
-              <Ionicons name="chevron-forward" size={18} color={colors.ink300} />
+              {selectedHandoff ? (
+                <Ionicons name="checkmark-circle" size={20} color={colors.brand600} />
+              ) : (
+                <Ionicons name="chevron-forward" size={18} color={colors.ink300} />
+              )}
             </Pressable>
 
             <Pressable
@@ -118,6 +143,15 @@ export default function CompletionModal({
               </View>
               <Ionicons name="chevron-forward" size={18} color={colors.ink300} />
             </Pressable>
+
+            {selectedHandoff ? (
+              <Pressable
+                style={({ pressed }) => [styles.confirmBtn, pressed && styles.confirmBtnPressed]}
+                onPress={onSelectHandoff}
+              >
+                <Text style={styles.confirmText}>手渡しで完了</Text>
+              </Pressable>
+            ) : null}
           </>
         ) : (
           <>
@@ -186,7 +220,6 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
     padding: space.lg,
-    paddingBottom: space.xxl,
     ...elevation.e3,
   },
   grabber: {
@@ -228,6 +261,11 @@ const styles = StyleSheet.create({
     marginTop: space.sm,
   },
   optionRowPressed: { opacity: 0.85 },
+  optionRowSelected: {
+    borderColor: colors.brand600,
+    borderWidth: 1.5,
+    backgroundColor: colors.brand050,
+  },
   optionIcon: {
     width: 42,
     height: 42,

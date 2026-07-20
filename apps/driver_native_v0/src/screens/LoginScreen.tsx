@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -23,6 +23,7 @@ export default function LoginScreen({ showToast }: Props) {
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const passwordRef = useRef<TextInput>(null);
 
   const handleLogin = async () => {
     if (!supabase) return;
@@ -66,18 +67,25 @@ export default function LoginScreen({ showToast }: Props) {
             keyboardType="email-address"
             placeholder="you@example.com"
             placeholderTextColor={colors.ink300}
+            returnKeyType="next"
+            onSubmitEditing={() => passwordRef.current?.focus()}
           />
         </View>
 
         <View style={styles.field}>
           <Text style={styles.label}>パスワード</Text>
           <TextInput
+            ref={passwordRef}
             style={styles.input}
             value={password}
             onChangeText={setPassword}
             secureTextEntry
             placeholder="••••••••"
             placeholderTextColor={colors.ink300}
+            returnKeyType="go"
+            onSubmitEditing={() => {
+              if (!submitting) handleLogin();
+            }}
           />
         </View>
 

@@ -126,6 +126,7 @@ export default function MapScreen({ stops, showToast }: Props) {
           </View>
 
           <Pressable
+            hitSlop={8}
             style={({ pressed }) => [styles.locateBtn, pressed && styles.locateBtnPressed]}
             onPress={() => showToast('現在地に移動（モック）')}
           >
@@ -209,7 +210,7 @@ const styles = StyleSheet.create({
   mapLabel: {
     position: 'absolute',
     ...type.caption,
-    color: colors.ink400,
+    color: colors.ink500,
   },
   pin: {
     position: 'absolute',
@@ -292,7 +293,7 @@ const styles = StyleSheet.create({
   navBtnText: { color: colors.white, fontSize: 15, fontWeight: '800' },
   mapPlanNote: {
     ...type.caption,
-    color: colors.ink400,
+    color: colors.ink500,
     lineHeight: 16,
     marginTop: space.sm,
     paddingHorizontal: space.xs,
