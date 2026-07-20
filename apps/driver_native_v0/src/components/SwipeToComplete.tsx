@@ -5,12 +5,15 @@ import { colors, elevation, radius, type } from '../theme';
 
 const HANDLE_SIZE = 46;
 const TRACK_PADDING = 4;
-// 完了判定はゆるめに（現場は手袋・片手・歩きながら）:
-//   ・距離: トラックの55%まで引けば成立（旧72%は遠すぎた）
-//   ・フリック: 速い払い（vx>=0.65px/ms）なら30%まで引ければ成立
-const THRESHOLD_RATIO = 0.55;
-const FLICK_VELOCITY = 0.65;
-const FLICK_MIN_RATIO = 0.3;
+// 完了判定は一般的な slide-to-confirm の作法に合わせる（現場は手袋・片手・歩きながら）:
+//   ・距離: トラックの45%まで引けば成立
+//   ・フリック: 速い払い（vx>=0.45px/ms）なら15%で成立
+//   ・ジェスチャ: 横意図（|dx|>|dy|）で即クレームし、一度掴んだら親スクロールに奪わせない
+//     （斜めに動いた瞬間スクロールに横取りされ途中でバネ戻りする＝「シビア」の正体）
+const THRESHOLD_RATIO = 0.45;
+const FLICK_VELOCITY = 0.45;
+const FLICK_MIN_RATIO = 0.15;
+const CLAIM_DX = 4; // この横移動で掴む（px）
 
 interface Props {
   label?: string;
@@ -32,11 +35,19 @@ export default function SwipeToComplete({ label = 'スワイプで完了', onCom
   maxTranslateRef.current = maxTranslate;
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
+  const disabledRef = useRef(!!disabled);
+  disabledRef.current = !!disabled;
 
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => !disabled,
-      onMoveShouldSetPanResponder: () => !disabled,
+      // タッチ開始では掴まない（バー上から縦スクロールを始める操作を殺さないため）。
+      // 横方向の意図（dx>=4px かつ |dx|>|dy|）が見えた瞬間に掴む。
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_evt, g) =>
+        !disabledRef.current && g.dx > CLAIM_DX && Math.abs(g.dx) > Math.abs(g.dy),
+      // 一度掴んだら親（ScrollView等）の横取り要求を拒否する＝途中でバネ戻りしない。
+      onPanResponderTerminationRequest: () => false,
+      onShouldBlockNativeResponder: () => true,
       onPanResponderMove: (_evt, gesture) => {
         const max = maxTranslateRef.current;
         const next = Math.min(Math.max(gesture.dx, 0), max);
