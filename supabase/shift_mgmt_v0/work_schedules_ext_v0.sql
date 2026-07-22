@@ -70,6 +70,25 @@ end $$;
 
 
 -- =============================================================
+-- §2-2. ★1日1稼働/ドライバー の一意制約（業務A確定 2026-07-20）
+--   理由: cap＝skill×hours は「1日1つの hours」を前提にしており、dispatch_drivers の PK が
+--     (run_date, driver_id) ＝「1日1ドライバー1cap」。同一 (driver, date) の承認が2行あると
+--     dispatch_build (1) が dispatch_drivers に2行 INSERT しようとして 23505 で **その日の配車が
+--     全営業所巻き添えで全停止**する（レビュー指摘・実証済み）。
+--   → work_schedules に UNIQUE(driver_id, work_date) を張り、定義域として「1日1稼働」を強制する。
+--     これで「同日2承認による配車全停止」と「二重申請の check-then-insert TOCTOU」を同時に塞ぐ。
+--   ⚠ 既存データに同一 (driver, date) が複数あると制約追加が失敗する。その場合は重複を解消してから。
+-- =============================================================
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'work_schedules_driver_date_uq') then
+    alter table public.work_schedules add constraint work_schedules_driver_date_uq
+      unique (driver_id, work_date);
+  end if;
+end $$;
+
+
+-- =============================================================
 -- §3. 希望エリア重複警告（common_id 単位・SELECTのみ・任意実行）
 --   同一 (driver_id, work_date) に希望エリアが複数行で重なっていないか等の点検用。
 --   ※本 v0.7 は1稼働=1行に希望エリア配列を持つ設計なので、行内重複は §2 CHECK が防ぐ。

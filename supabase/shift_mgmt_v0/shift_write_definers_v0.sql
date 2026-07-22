@@ -41,6 +41,7 @@ declare
   v_office text;
   v_period integer;
   v_id     bigint;
+  v_status_existing text;
 begin
   -- 認可: driver 本人のみ
   if public.my_role() is distinct from 'driver' or v_driver is null then
@@ -70,12 +71,25 @@ begin
       using errcode = '22023';
   end if;
 
-  -- 二重申請防止（同一 driver/date/work_type）
-  select id into v_id from public.work_schedules
-  where driver_id = v_driver and work_date = p_work_date and work_type = p_work_type;
+  -- 二重申請防止：★1日1稼働のため判定キーは (driver, date)（work_type は問わない）。
+  --   UNIQUE(driver_id, work_date) と同じキーに寄せる（3つ組のままだと別 work_type の2件目が
+  --   INSERT 時に 23505 で不親切に落ちるため。レビュー指摘）。
+  --   ・既存が「申請中/承認」なら already（同日は1稼働まで）。
+  --   ・既存が「却下」なら **本人の再申請を許す**：同じ行を 申請中 に戻して希望も更新する
+  --     （却下後は3関数に削除口が無く、tuple一致で always already だと再申請経路が塞がる。レビューLOW）。
+  select id, application_status into v_id, v_status_existing
+  from public.work_schedules
+  where driver_id = v_driver and work_date = p_work_date;
   if found then
+    if v_status_existing = '却下' then
+      update public.work_schedules
+         set work_type = p_work_type, application_status = '申請中', preferred_areas = p_preferred_areas
+       where id = v_id;
+      return jsonb_build_object('result','reapplied','id',v_id,
+        'driver_id',v_driver,'work_date',p_work_date,'work_type',p_work_type,'status','申請中');
+    end if;
     return jsonb_build_object('result','already','id',v_id,
-      'driver_id',v_driver,'work_date',p_work_date,'work_type',p_work_type);
+      'driver_id',v_driver,'work_date',p_work_date,'work_type',p_work_type,'status',v_status_existing);
   end if;
 
   insert into public.work_schedules (driver_id, work_date, work_type, application_status, preferred_areas)
@@ -164,11 +178,18 @@ language plpgsql
 security definer
 set search_path = public
 as $$
-declare v_id bigint;
+declare
+  v_id bigint;
+  v_status_existing text;
 begin
   if public.my_role() is distinct from 'area' then
     raise exception '直接入力できるのは営業所(area)のみです (role=%)',
       coalesce(public.my_role(), '(未設定)') using errcode = '42501';
+  end if;
+  -- ★入力必須チェックは認可ゲートの前後で先に（NIT: p_driver_id=NULL だと NOT IN が NULL 評価で
+  --   認可 raise をすり抜け、下流の NOT NULL(23502) 頼みになる。ここで明示的に弾く。レビュー指摘）。
+  if p_driver_id is null or btrim(p_driver_id) = '' then
+    raise exception 'ドライバーID（driver_id）は必須です' using errcode = '22023';
   end if;
   if p_work_type is null or btrim(p_work_type) = '' then
     raise exception '稼働区分（work_type）は必須です' using errcode = '22023';
@@ -180,12 +201,21 @@ begin
       using errcode = '42501';
   end if;
 
-  -- 二重登録防止
-  select id into v_id from public.work_schedules
-  where driver_id = p_driver_id and work_date = p_work_date and work_type = p_work_type;
+  -- 二重登録防止：★1日1稼働のため判定キーは (driver, date)（UNIQUE と同じキー）。
+  --   既存が却下なら承認で上書き（訂正用の直接入力＝却下を承認に戻せる）。それ以外は already。
+  select id, application_status into v_id, v_status_existing
+  from public.work_schedules
+  where driver_id = p_driver_id and work_date = p_work_date;
   if found then
+    if v_status_existing = '却下' then
+      update public.work_schedules
+         set work_type = p_work_type, application_status = '承認', preferred_areas = p_preferred_areas
+       where id = v_id;
+      return jsonb_build_object('result','registered','id',v_id,
+        'driver_id',p_driver_id,'work_date',p_work_date,'work_type',p_work_type,'status','承認');
+    end if;
     return jsonb_build_object('result','already','id',v_id,
-      'driver_id',p_driver_id,'work_date',p_work_date,'work_type',p_work_type);
+      'driver_id',p_driver_id,'work_date',p_work_date,'work_type',p_work_type,'status',v_status_existing);
   end if;
 
   insert into public.work_schedules (driver_id, work_date, work_type, application_status, preferred_areas)

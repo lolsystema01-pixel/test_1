@@ -34,9 +34,12 @@ const { data, error } = await supabase.rpc('apply_shift', {
 // 新規申請
 { "result": "applied", "id": 123, "driver_id": "DRV001",
   "work_date": "2026-08-01", "work_type": "フル", "status": "申請中" }
-// 既に申請済み（二重申請）
+// 既にその日に申請/承認あり（1日1稼働＝二重申請扱い）
 { "result": "already", "id": 123, "driver_id": "DRV001",
-  "work_date": "2026-08-01", "work_type": "フル" }
+  "work_date": "2026-08-01", "work_type": "フル", "status": "申請中" }
+// その日が「却下」だった → 本人が再申請でき、申請中に戻る（work_type/希望も更新）
+{ "result": "reapplied", "id": 123, "driver_id": "DRV001",
+  "work_date": "2026-08-01", "work_type": "6時間", "status": "申請中" }
 ```
 
 **エラー**
@@ -47,7 +50,8 @@ const { data, error } = await supabase.rpc('apply_shift', {
 | `22023` | work_type 空 ／ 申請可能期間外（過去日・request_period_days 超） |
 | `P0002` | ドライバーの所属営業所が解決できない |
 
-**冪等性**: 同一 `(driver, date, work_type)` の再呼び出しは `already`（行は増えない）。
+**冪等性・1日1稼働**: 判定キーは **`(driver, date)`**（work_type は問わない）。同一日に既に「申請中/承認」があれば `already`（行は増えない）。**「却下」だった場合のみ本人の再申請を許し**、同じ行を `申請中` に戻す（`reapplied`）。
+DB 制約 `UNIQUE(driver_id, work_date)` が「1日1稼働」を保証する（別 work_type での二重行は作れない＝配車 `dispatch_build` が同一ドライバー2 cap で 23505 停止するのを構造的に防ぐ）。
 
 ---
 
@@ -88,8 +92,8 @@ const { data, error } = await supabase.rpc('approve_reject_shift', { p_id: 123, 
 |---|---|
 | 呼ぶ人 | **area**（`my_role()='area'`） |
 | 引数 | `p_driver_id text`（必須）／`p_work_date date`（必須）／`p_work_type text`（必須）／`p_preferred_areas text[]`（任意） |
-| 認可 | `p_driver_id` が `my_office_drivers()` 配下のみ |
-| 登録 | **承認状態**で直接登録（アプリ未使用者・訂正用）。二重登録防止 |
+| 認可 | `p_driver_id` が `my_office_drivers()` 配下のみ。`p_driver_id` 空/NULL は認可判定の前に `22023` で弾く |
+| 登録 | **承認状態**で直接登録（アプリ未使用者・訂正用）。1日1稼働（`(driver, date)` で二重登録防止） |
 
 **RPC 例**
 ```ts
@@ -102,9 +106,12 @@ const { data, error } = await supabase.rpc('office_direct_shift', {
 ```jsonc
 { "result": "registered", "id": 124, "driver_id": "DRV002",
   "work_date": "2026-08-01", "work_type": "フル", "status": "承認" }
-// 既に登録済み
+// 既にその日に登録あり（申請中/承認）
 { "result": "already", "id": 124, "driver_id": "DRV002",
-  "work_date": "2026-08-01", "work_type": "フル" }
+  "work_date": "2026-08-01", "work_type": "フル", "status": "承認" }
+// その日が「却下」だった → 承認で上書き（訂正用に再登録）
+{ "result": "registered", "id": 124, "driver_id": "DRV002",
+  "work_date": "2026-08-01", "work_type": "フル", "status": "承認" }
 ```
 
 **エラー**
@@ -112,9 +119,9 @@ const { data, error } = await supabase.rpc('office_direct_shift', {
 | code | 意味 |
 |---|---|
 | `42501` | area でない ／ 対象ドライバーが自営業所の配下でない |
-| `22023` | work_type 空 |
+| `22023` | driver_id 空/NULL ／ work_type 空 |
 
-**冪等性**: 同一 `(driver, date, work_type)` の再呼び出しは `already`。
+**冪等性・1日1稼働**: 判定キーは **`(driver, date)`**。同一日に既に「申請中/承認」があれば `already`。**「却下」だった場合のみ承認で上書き**（訂正用に却下を戻せる）。UNIQUE(driver_id, work_date) と同キー。
 
 ---
 

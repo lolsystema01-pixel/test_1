@@ -140,6 +140,54 @@ console.log('⑤ headcount');
   ok('⑤ A01/当日+7 の承認済み人数=2（DRV001実+DRV002直接）', hc.headcount === 2);
 }
 
+// ---- ⑥ レビュー対応: 1日1稼働の一意制約（配車全停止バグ・TOCTOU） ----
+console.log('⑥ 1日1稼働 UNIQUE（レビューMED/HIGH）');
+{
+  ok('⑥ UNIQUE(driver_id, work_date) が張られている',
+     (await one(db, `select count(*)::int n from pg_constraint where conname='work_schedules_driver_date_uq'`)).n === 1);
+
+  // 同一driver・同一日に別work_typeの2承認を作ろうとしても、UNIQUE で2件目が作れない
+  await as('driver', null, 'DRV003');   // C01のドライバー（未使用日で）
+  const r1 = await rpc(`select public.apply_shift(current_date + 20, 'フル') as j`);
+  const r2 = await rpc(`select public.apply_shift(current_date + 20, '6時間') as j`);
+  ok('⑥ 同一(driver,date)の2件目 apply は already（別work_typeでも二重申請扱い＝1日1稼働）',
+     r1.ok && r1.row.j.result === 'applied' && r2.ok && r2.row.j.result === 'already');
+  const cnt = (await one(db, `select count(*)::int n from public.work_schedules where driver_id='DRV003' and work_date=current_date+20`)).n;
+  ok('⑥ 同一(driver,date)は1行のみ（配車全停止バグの根を断つ）', cnt === 1);
+
+  // TOCTOU: 直接INSERTで2行作ろうとしても UNIQUE が弾く
+  let toctou = null;
+  try { await db.exec(`insert into public.work_schedules(driver_id,work_date,work_type,application_status)
+                       values('DRV003',current_date+21,'フル','申請中'),('DRV003',current_date+21,'2時間','申請中')`); }
+  catch (e) { toctou = e.code; }
+  ok('⑥ 直接INSERTの同日2行も UNIQUE(23505) で拒否（check-then-insert の TOCTOU を塞ぐ）', toctou === '23505');
+}
+
+// ---- ⑦ 却下後の再申請（レビューLOW） ----
+console.log('⑦ 却下後の再申請');
+{
+  await as('driver', null, 'DRV002');
+  const a = await rpc(`select public.apply_shift(current_date + 22, 'フル') as j`);
+  const id = a.row.j.id;
+  await as('area', 'A01', null);
+  await rpc(`select public.approve_reject_shift($1,'却下') as j`, [id]);
+  await as('driver', null, 'DRV002');
+  const re = await rpc(`select public.apply_shift(current_date + 22, '6時間') as j`);
+  ok('⑦ 却下後は本人が再申請できる（result=reapplied・申請中に戻る）',
+     re.ok && re.row.j.result === 'reapplied' && re.row.j.status === '申請中');
+  ok('⑦ 再申請で work_type も更新される',
+     (await one(db, `select work_type from public.work_schedules where id=$1`, [id])).work_type === '6時間');
+}
+
+// ---- ⑧ office_direct_shift(NULL) は 22023 で弾く（レビューNIT） ----
+console.log('⑧ office_direct_shift(NULL driver)');
+{
+  await as('area', 'A01', null);
+  const r = await rpc(`select public.office_direct_shift(null, current_date + 23, 'フル') as j`);
+  ok('⑧ driver_id=NULL は認可ゲート直後に 22023（下流NOT NULL頼みにしない）',
+     !r.ok && /driver_id.*必須|ドライバーID.*必須/.test(r.msg));
+}
+
 console.log(`\n=== ${pass} PASS / ${fail} FAIL ===`);
 await db.close();
 process.exit(fail ? 1 : 0);
