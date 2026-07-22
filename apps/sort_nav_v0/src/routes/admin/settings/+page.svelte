@@ -11,6 +11,7 @@
     auto_logout_enabled: boolean | null;
     auto_logout_minutes: number | null;
     printer_model: string | null;
+    gdrive_folder_url: string | null;
   };
   let { data } = $props();
   let { supabase, canEdit, role } = $derived(data);
@@ -35,6 +36,8 @@
     saving = o.office_code;
     msg = '';
     msgErr = false;
+    // 4項目（かご/自動ログアウト/印刷）は update_office_settings、
+    // 持出バッグリストURL（§12.14）は専用の set_office_gdrive_url（NULLで未完に戻せる）。
     const { error } = await supabase.rpc('update_office_settings', {
       p_office_code: o.office_code,
       p_basket_cart_limit: numOrNull(o.basket_cart_limit),
@@ -43,9 +46,16 @@
       p_auto_logout_minutes: numOrNull(o.auto_logout_minutes),
       p_printer_model: o.printer_model || null
     });
-    if (error) {
+    const { error: gdErr } = error
+      ? { error: null }
+      : await supabase.rpc('set_office_gdrive_url', {
+          p_office_code: o.office_code,
+          p_gdrive_folder_url: (o.gdrive_folder_url ?? '').trim() || null // 空欄=未完に戻す
+        });
+    const err = error ?? gdErr;
+    if (err) {
       msgErr = true;
-      msg = `${o.office_code} の保存に失敗：${[error.message, error.details, error.hint].filter(Boolean).join(' ／ ')}`;
+      msg = `${o.office_code} の保存に失敗：${[err.message, err.details, err.hint].filter(Boolean).join(' ／ ')}`;
     } else {
       msg = `${o.office_code} を保存しました。`;
     }
@@ -56,7 +66,7 @@
   async function reload() {
     const { data: fresh, error } = await supabase
       .from('offices')
-      .select('office_code, office_name, basket_cart_limit, basket_order, auto_logout_enabled, auto_logout_minutes, printer_model')
+      .select('office_code, office_name, basket_cart_limit, basket_order, auto_logout_enabled, auto_logout_minutes, printer_model, gdrive_folder_url')
       .order('office_code', { ascending: true });
     if (error) {
       msgErr = true;
@@ -129,6 +139,13 @@
           {#each PRINTER_OPTIONS as p (p)}<option value={p}>{p}</option>{/each}
         </select>
         <small>ラベル印刷ブリッジが使う機種。</small>
+      </label>
+
+      <label class="wide">
+        持出バッグリスト フォルダURL（§12.14）
+        <input type="url" bind:value={o.gdrive_folder_url} disabled={!canEdit}
+               placeholder="https://drive.google.com/drive/folders/..." autocomplete="off" />
+        <small>かご持出表のGドライブ保存先。<strong>空欄にすると「初期設定 未完」に戻り</strong>、その営業所は次回ログイン時に初期設定画面が再表示されます。</small>
       </label>
     </div>
 

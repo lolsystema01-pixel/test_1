@@ -243,6 +243,51 @@ console.log('G. 既存列への影響');
                        and cmd in ('INSERT','UPDATE','DELETE','ALL')`)).n === 0);
 }
 
+// ---- H. set_office_gdrive_url（hq専用の再編集口・NULLクリア可）----
+console.log('H. hq 再編集口 set_office_gdrive_url');
+{
+  const setUrl = async (office, url) => {
+    try { await db.query(`select public.set_office_gdrive_url($1,$2)`, [office, url]); return null; }
+    catch (e) { return e.message; }
+  };
+  // 前提: C01 を完了状態にしておく（hqで）
+  await as('hq', null);
+  await setUrl('C01', 'https://drive.google.com/drive/folders/BEFORE');
+  ok('H. hq が既存URLを別URLに付け替えできる',
+     (await setUrl('C01', 'https://drive.google.com/drive/folders/AFTER')) === null
+     && (await one(db, `select gdrive_folder_url from public.offices where office_code='C01'`))
+          .gdrive_folder_url === 'https://drive.google.com/drive/folders/AFTER');
+  ok('H. hq は NULL で「未完に戻す」ことができる（save_office_init_setup にはできない操作）',
+     (await setUrl('C01', null)) === null
+     && (await one(db, `select gdrive_folder_url from public.offices where office_code='C01'`))
+          .gdrive_folder_url === null);
+  ok('H. 空文字も NULL に正規化される（未完）',
+     (await setUrl('C01', '   ')) === null
+     && (await one(db, `select gdrive_folder_url from public.offices where office_code='C01'`))
+          .gdrive_folder_url === null);
+  ok('H. 不正URL（Drive以外）は CHECK と同一条件で拒否', (await setUrl('C01', 'https://evil.com/x')) !== null);
+  ok('H. 改行注入も拒否', (await setUrl('C01', 'https://drive.google.com/x\nhttps://evil.com')) !== null);
+  ok('H. 存在しない営業所は P0002', (await setUrl('NOPE', 'https://drive.google.com/drive/folders/x')) !== null);
+  // area は使えない
+  await as('area', 'IT01');
+  ok('H. area は set_office_gdrive_url を使えない（自営業所でも拒否）',
+     (await setUrl('IT01', 'https://drive.google.com/drive/folders/x')) !== null);
+  ok('H. driver も拒否',
+     (await as('driver', null), await setUrl('IT01', 'https://drive.google.com/drive/folders/x')) !== null);
+}
+
+// ---- I. is_valid_gdrive_url ヘルパー（単一の正・CHECKと両RPCが共有）----
+console.log('I. is_valid_gdrive_url（受理判定の単一の正）');
+{
+  const valid = async (u) => (await db.query(`select public.is_valid_gdrive_url($1) as v`, [u])).rows[0].v;
+  ok('I. 正常URLは true', (await valid('https://drive.google.com/drive/folders/abc')) === true);
+  ok('I. 前後空白ありは false（trim済みを要求）', (await valid(' https://drive.google.com/x ')) === false);
+  ok('I. 改行入りは false', (await valid('https://drive.google.com/x\ny')) === false);
+  ok('I. NULL は false', (await valid(null)) === false);
+  ok('I. immutable として定義されている（CHECK から参照可能）',
+     (await one(db, `select provolatile from pg_proc where proname='is_valid_gdrive_url'`)).provolatile === 'i');
+}
+
 console.log(`\n=== ${pass} PASS / ${fail} FAIL ===`);
 await db.close();
 process.exit(fail ? 1 : 0);

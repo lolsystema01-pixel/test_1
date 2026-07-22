@@ -38,37 +38,50 @@ alter table public.offices add column if not exists gdrive_folder_url text;
 comment on column public.offices.gdrive_folder_url is
   '持出バッグリストのGドライブ保存先フォルダURL（§12.14・営業所別）。NULL＝初期設定 未完（初回ゲートの判定に流用・専用フラグ列は作らない）。消費側＝出力の保存先 v0.3（§12.10.5）';
 
+
+-- =============================================================
+-- §0. gdrive_folder_url の受理判定（単一の正）
+--   CHECK 制約・保存口2本が同一条件を参照するためのヘルパー（4箇所コピーを避ける）。
+--   「保存してよい非NULL値」＝ trim済み・500文字以内・改行なし・URL安全文字のみの Drive フォルダURL。
+--   ⚠ 正規表現の落とし穴（実測で確認）:
+--     ・\Z は Postgres 非対応（リテラルZ扱い）→ 使わない。
+--     ・[^\s] はブラケット内でバックスラッシュがリテラル化し「s以外」の意になり "folders" の s で
+--       正常URLを誤弾き → 使わない。
+--   → 文字クラス allowlist（<> 空白 その他記号を弾く）＋ 既定の $（文字列末尾）＋ strpos の改行チェック。
+--   immutable（純関数）なので CHECK 制約から参照できる。
+-- =============================================================
+create or replace function public.is_valid_gdrive_url(u text)
+returns boolean
+language sql
+immutable
+as $$
+  select u is not null
+     and u = btrim(u)
+     and length(u) <= 500
+     and strpos(u, chr(10)) = 0
+     and u ~ '^https://drive\.google\.com/[A-Za-z0-9/_?=&%.-]+$'
+$$;
+comment on function public.is_valid_gdrive_url(text) is
+  '持出バッグリストGドライブURLの受理判定（§12.14）。trim済み・500字以内・改行なし・URL安全文字のみの drive.google.com フォルダURL。CHECK制約と保存口が共有する単一の正';
+
 -- gdrive_folder_url に入れてよい値を CHECK で厳密に縛る（冪等）。
 --   目的1: 未完の表現を **NULL のみ** に限定（空文字を作れないように）。
 --     空文字を許すと、ゲートは `is null` 判定なので「完了」とみなして初期設定画面を出さない一方、
 --     保存口の area 分岐は `v_current is null` のみ許可なので area は直せない
 --     ＝「画面は出ないのに設定もできない」宙づり状態が postgres 直UPDATEで作れてしまう。
 --   目的2: Drive フォルダURL以外・改行混入・不正文字・過大長を弾く（v0.3 の Gドライブ保存や帳票に
---     この値が埋め込まれる段での改行注入・不正コンテンツの芽を根本から断つ）。
---     ・`^https://drive\.google\.com/[A-Za-z0-9/_?=&%.-]+$` … Drive 直下に URL安全な文字が最低1文字。
---       - 文字クラスで <, >, 空白, その他の記号を弾く（HTMLメタ文字・注入を封じる）。
---       - `$` は Postgres 既定で「文字列末尾」（改行行末にはマッチしない・(?n)未指定）＝後続行の付加を許さない。
---       - さらに `strpos(..., chr(10))=0` で改行を明示的に二重拒否（保険）。
---       ⚠ `\Z` は Postgres 非対応（リテラルZ扱い）、`[^\s]` はブラケット内でバックスラッシュがリテラル化し
---         「s以外」の意になる（"folders" の s で正常URLを誤弾き）。実測で両方確認済み＝どちらも使わない。
---     ・length <= 500 … 過大長の上限。
---   ※ 保存口 save_office_init_setup は btrim 済みの値を書き込むため、CHECK も btrim 後を対象にする。
+--     この値が埋め込まれる段での改行注入・不正コンテンツの芽を根本から断つ）。判定は §0 の
+--     is_valid_gdrive_url に一本化（CHECK・保存口2本が同じ関数を参照＝条件のドリフトを防ぐ）。
+--   ※ 保存口は btrim 済みの値を書き込むが、postgres 直UPDATE の未trim値も弾けるよう
+--     is_valid_gdrive_url 内で `u = btrim(u)` を課している。
 do $$
 begin
   if exists (select 1 from pg_constraint where conname = 'offices_gdrive_folder_url_chk') then
-    -- 旧定義（空文字のみ禁止・旧パターン）が残っていれば張り替える
+    -- 旧定義（空文字のみ禁止・インライン旧パターン）が残っていれば張り替える
     alter table public.offices drop constraint offices_gdrive_folder_url_chk;
   end if;
   alter table public.offices add constraint offices_gdrive_folder_url_chk
-    check (
-      gdrive_folder_url is null
-      or (
-        gdrive_folder_url = btrim(gdrive_folder_url)
-        and length(gdrive_folder_url) <= 500
-        and strpos(gdrive_folder_url, chr(10)) = 0
-        and gdrive_folder_url ~ '^https://drive\.google\.com/[A-Za-z0-9/_?=&%.-]+$'
-      )
-    );
+    check ( gdrive_folder_url is null or public.is_valid_gdrive_url(gdrive_folder_url) );
 end $$;
 
 
@@ -124,10 +137,8 @@ begin
     raise exception '持出バッグリストのフォルダURLは必須です（空にはできません）'
       using errcode = '22023';
   end if;
-  -- CHECK 制約と同一パターン（URL安全文字・改行/空白なし・終端固定・長さ上限）。片方だけ緩いと形骸化するため。
-  if length(btrim(p_gdrive_folder_url)) > 500
-     or strpos(btrim(p_gdrive_folder_url), chr(10)) <> 0
-     or btrim(p_gdrive_folder_url) !~ '^https://drive\.google\.com/[A-Za-z0-9/_?=&%.-]+$' then
+  -- URL の受理判定は CHECK と共有の is_valid_gdrive_url に一本化（片方だけ緩いと形骸化するため）。
+  if not public.is_valid_gdrive_url(btrim(p_gdrive_folder_url)) then
     raise exception
       'GドライブのフォルダURLを指定してください（https://drive.google.com/… で始まり、改行や空白・記号を含まない500文字以内）: %',
       p_gdrive_folder_url using errcode = '22023';
@@ -165,6 +176,53 @@ comment on function public.save_office_init_setup(text, text, text) is
 
 revoke execute on function public.save_office_init_setup(text, text, text) from public;
 grant  execute on function public.save_office_init_setup(text, text, text) to authenticated;
+
+
+-- =============================================================
+-- §2-2. 管理者による再編集口（hq 専用・§12.13 から呼ぶ）
+--   ・初期設定（§12.14）は area が初回のみ入力するが、その後の変更は hq が管理者設定から行う。
+--     save_office_init_setup は「初回設定」の口で printer_model を必須とし NULL クリアを許さないため、
+--     gdrive_folder_url だけを付け替え／クリアする hq 専用の口を分ける。
+--   ・NULL を許可＝「初期設定 未完に戻す」（誤登録・営業所閉鎖時など）ができる。
+--   ・非NULL は is_valid_gdrive_url でCHECKと同一検証。offices に write policy は作らない（規約）。
+-- =============================================================
+create or replace function public.set_office_gdrive_url(
+  p_office_code       text,
+  p_gdrive_folder_url text        -- NULL 可（＝未完に戻す）
+) returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_norm    text := nullif(btrim(p_gdrive_folder_url), '');  -- 空文字は NULL 扱い（未完）に正規化
+  v_updated integer;
+begin
+  if public.my_role() is distinct from 'hq' then
+    raise exception 'Gドライブ保存先を変更できるのは管理者(hq)のみです (role=%)',
+      coalesce(public.my_role(), '(未設定)') using errcode = '42501';
+  end if;
+
+  -- 非NULL なら CHECK と同一の受理判定（友好的なエラーのため関数側でも検証）
+  if v_norm is not null and not public.is_valid_gdrive_url(v_norm) then
+    raise exception
+      'GドライブのフォルダURLを指定してください（https://drive.google.com/… で始まり、改行や空白・記号を含まない500文字以内）: %',
+      p_gdrive_folder_url using errcode = '22023';
+  end if;
+
+  update public.offices set gdrive_folder_url = v_norm
+  where office_code = p_office_code;
+  get diagnostics v_updated = row_count;
+  if v_updated = 0 then
+    raise exception '営業所が存在しません: %', p_office_code using errcode = 'P0002';
+  end if;
+end $$;
+
+comment on function public.set_office_gdrive_url(text, text) is
+  '管理者(hq)による持出バッグリストGドライブURLの再編集（§12.13）。NULLで未完に戻せる。非NULLは is_valid_gdrive_url で検証。SECURITY DEFINER';
+
+revoke execute on function public.set_office_gdrive_url(text, text) from public;
+grant  execute on function public.set_office_gdrive_url(text, text) to authenticated;
 
 
 -- =============================================================
