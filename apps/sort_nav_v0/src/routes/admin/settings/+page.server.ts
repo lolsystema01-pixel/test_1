@@ -15,6 +15,7 @@ export type OfficeSetting = {
   auto_logout_enabled: boolean | null;
   auto_logout_minutes: number | null;
   printer_model: string | null;
+  gdrive_folder_url: string | null;
 };
 
 export const load: PageServerLoad = async ({ locals: { supabase, safeGetSession } }) => {
@@ -35,7 +36,7 @@ export const load: PageServerLoad = async ({ locals: { supabase, safeGetSession 
   // RLS が範囲を絞る（hq=全件／area=自営業所のみ）。明示フィルタはしない。
   const { data: offices, error } = await supabase
     .from('offices')
-    .select('office_code, office_name, basket_cart_limit, basket_order, auto_logout_enabled, auto_logout_minutes, printer_model')
+    .select('office_code, office_name, basket_cart_limit, basket_order, auto_logout_enabled, auto_logout_minutes, printer_model, gdrive_folder_url')
     .order('office_code', { ascending: true });
 
   return {

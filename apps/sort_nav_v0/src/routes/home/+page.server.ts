@@ -41,6 +41,19 @@ export const load: PageServerLoad = async ({ locals: { supabase, safeGetSession 
     throw redirect(303, '/incomplete');
   }
 
+  // 初期設定ゲート（§12.14）: gdrive_folder_url が NULL＝初期設定 未完 → 初回のみ /setup へ。
+  //   ・入力後は NULL でなくなるので、以降ここは素通りする（専用フラグ列は作らない）。
+  //   ・取得失敗のときは通す（握りつぶさない代わりに、ここで止めてホームを塞がない。
+  //     /setup 側で loadError を表示する）。
+  const { data: officeSetup, error: setupError } = await supabase
+    .from('offices')
+    .select('gdrive_folder_url')
+    .eq('office_code', profile.office_code)
+    .maybeSingle();
+  if (!setupError && officeSetup && officeSetup.gdrive_folder_url === null) {
+    throw redirect(303, '/setup');
+  }
+
   // 既定は「JSTの今日」。実行環境(UTC/ローカル)に依存させない（クライアントの today() と一致）
   const date = url.searchParams.get('date') ?? todayJst();
 
