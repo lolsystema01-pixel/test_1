@@ -156,6 +156,20 @@ await db.exec(CAP);
   ok('E. エラーが管理者設定/配布口へ誘導する', err !== null && /管理者設定|seed_office_shift_labels/.test(err));
 }
 
+// ---- F. shift_labels の driver 読取（レビューMED-2：8.7 申請画面の選択肢の口） ----
+console.log('F. shift_labels driver 読取（レビューMED-2）');
+{
+  const pol = await one(db, `select qual from pg_policies where tablename='shift_labels' and policyname='shift_labels_driver'`);
+  ok('F. driver 読取ポリシーが在る（shift_labels_driver）', pol !== undefined);
+  ok('F. driver ポリシーは自営業所に絞る（my_driver 経由で drivers.office_code 参照）',
+     pol !== undefined && /my_driver/.test(pol.qual) && /office_code/.test(pol.qual));
+  ok('F. shift_labels の SELECT ポリシーは hq/area/driver の3本',
+     (await one(db, `select count(*)::int n from pg_policies where tablename='shift_labels' and cmd='SELECT'`)).n === 3);
+  ok('F. shift_labels に書込ポリシーは0本（書込は移行/配布のみ・規約）',
+     (await one(db, `select count(*)::int n from pg_policies where tablename='shift_labels'
+        and cmd in ('INSERT','UPDATE','DELETE','ALL')`)).n === 0);
+}
+
 console.log(`\n=== ${pass} PASS / ${fail} FAIL ===`);
 await db.close();
 process.exit(fail ? 1 : 0);

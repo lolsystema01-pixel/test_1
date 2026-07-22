@@ -42,6 +42,7 @@ declare
   v_period integer;
   v_id     bigint;
   v_status_existing text;
+  v_updated integer;
 begin
   -- 認可: driver 本人のみ
   if public.my_role() is distinct from 'driver' or v_driver is null then
@@ -82,9 +83,19 @@ begin
   where driver_id = v_driver and work_date = p_work_date;
   if found then
     if v_status_existing = '却下' then
+      -- ★atomic 再チェック：where に and application_status='却下' を付ける（select→update の隙で
+      --   承認/直接上書きが割り込むと、status 無しの blind update だと後勝ちで一方の決定が無言で消える。
+      --   approve_reject と同じ「update where 状態＋get diagnostics」パターンに揃える。レビューHIGH-1）。
       update public.work_schedules
          set work_type = p_work_type, application_status = '申請中', preferred_areas = p_preferred_areas
-       where id = v_id;
+       where id = v_id and application_status = '却下';
+      get diagnostics v_updated = row_count;
+      if v_updated = 0 then
+        -- 併走で却下でなくなった＝現在値を読み直して already で返す（無言上書きしない）。
+        select application_status into v_status_existing from public.work_schedules where id = v_id;
+        return jsonb_build_object('result','already','id',v_id,
+          'driver_id',v_driver,'work_date',p_work_date,'work_type',p_work_type,'status',v_status_existing);
+      end if;
       return jsonb_build_object('result','reapplied','id',v_id,
         'driver_id',v_driver,'work_date',p_work_date,'work_type',p_work_type,'status','申請中');
     end if;
@@ -122,24 +133,24 @@ as $$
 declare
   v_row     record;
   v_updated integer;
+  v_current text;
 begin
   if public.my_role() is distinct from 'area' then
     raise exception '承認/却下できるのは営業所(area)のみです (role=%)',
       coalesce(public.my_role(), '(未設定)') using errcode = '42501';
   end if;
+  -- ★不正な決定値は入力エラー＝22023（既確定の状態競合 23514 と意味を分ける。レビューHIGH-2）。
   if p_decision not in ('承認','却下') then
-    raise exception '決定は 承認/却下 のみ（%）', coalesce(p_decision,'(null)') using errcode = '23514';
+    raise exception '決定は 承認/却下 のみです（%）', coalesce(p_decision,'(null)') using errcode = '22023';
   end if;
 
   select ws.id, ws.driver_id, ws.application_status into v_row
   from public.work_schedules ws where ws.id = p_id;
-  if not found then
-    raise exception '対象の稼働予定が見つかりません (id=%)', p_id using errcode = 'P0002';
-  end if;
-
-  -- 配下ドライバーのみ（他営業所は拒否）
-  if v_row.driver_id not in (select public.my_office_drivers()) then
-    raise exception 'この稼働予定は自営業所の配下ではありません (id=%, driver=%)', p_id, v_row.driver_id
+  -- ★「見つからない」と「配下外」を同一メッセージ・同一コード(42501)に畳む（レビューLOW-1）。
+  --   別々（P0002 と 42501）だと area が他営業所の id 存在を error コードで推測できる（存在オラクル）。
+  --   not found のとき driver_id は null で `null not in(...)`=null になるが、or の左（not found）で真になる。
+  if not found or v_row.driver_id not in (select public.my_office_drivers()) then
+    raise exception '対象の稼働予定が無いか、自営業所の配下ではありません (id=%)', p_id
       using errcode = '42501';
   end if;
 
@@ -149,7 +160,16 @@ begin
    where id = p_id and application_status = '申請中';
   get diagnostics v_updated = row_count;
   if v_updated = 0 then
-    raise exception '申請中の稼働予定のみ承認/却下できます（現状: %）', v_row.application_status
+    -- 申請中でない＝既に確定済み。冪等応答を apply/office_direct（already）と対称にする（レビューHIGH-2）:
+    --   ・同じ決定の再送（ネットワーク瞬断後の再試行）は「成功済み」＝result:'already' で返す
+    --     （消費側の再送キューが 23514=恒久エラーと分類して「承認失敗」と誤表示するのを防ぐ）。
+    --   ・別決定への変更要求（承認済みを却下等）は本物の状態競合＝23514 で拒否（再送してはならない）。
+    select application_status into v_current from public.work_schedules where id = p_id;
+    if v_current = p_decision then
+      return jsonb_build_object('result','already','id',p_id,
+        'driver_id',v_row.driver_id,'status',v_current);
+    end if;
+    raise exception '既に「%」で確定済みのため「%」に変更できません（申請中のみ変更可）', v_current, p_decision
       using errcode = '23514';
   end if;
 
@@ -181,6 +201,7 @@ as $$
 declare
   v_id bigint;
   v_status_existing text;
+  v_updated integer;
 begin
   if public.my_role() is distinct from 'area' then
     raise exception '直接入力できるのは営業所(area)のみです (role=%)',
@@ -208,9 +229,17 @@ begin
   where driver_id = p_driver_id and work_date = p_work_date;
   if found then
     if v_status_existing = '却下' then
+      -- ★atomic 再チェック（レビューHIGH-1）：where に and application_status='却下'。
+      --   却下行への再申請(apply)と直接上書き(office_direct)がほぼ同時に走っても後勝ちで消さない。
       update public.work_schedules
          set work_type = p_work_type, application_status = '承認', preferred_areas = p_preferred_areas
-       where id = v_id;
+       where id = v_id and application_status = '却下';
+      get diagnostics v_updated = row_count;
+      if v_updated = 0 then
+        select application_status into v_status_existing from public.work_schedules where id = v_id;
+        return jsonb_build_object('result','already','id',v_id,
+          'driver_id',p_driver_id,'work_date',p_work_date,'work_type',p_work_type,'status',v_status_existing);
+      end if;
       return jsonb_build_object('result','registered','id',v_id,
         'driver_id',p_driver_id,'work_date',p_work_date,'work_type',p_work_type,'status','承認');
     end if;

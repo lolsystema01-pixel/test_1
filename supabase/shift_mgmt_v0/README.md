@@ -23,11 +23,12 @@
 
 | 書き込み口 | 呼ぶ人 | 関数内の認可（門番） |
 |---|---|---|
-| `apply_shift` | driver | `my_driver()` 本人のみ・`request_period_days` 期間チェック・**1日1稼働**の二重申請防止（却下後は再申請可）。**driver_id は引数で受けない**（なりすまし防止） |
-| `approve_reject_shift` | area | `my_office_drivers()` 配下のみ・状態遷移（申請中→承認/却下） |
-| `office_direct_shift` | area | 同上・承認状態で直接登録（フォールバック・却下は承認で上書き） |
+| `apply_shift` | driver | `my_driver()` 本人のみ・`request_period_days` 期間チェック・**1日1稼働**の二重申請防止（却下後は再申請可・atomic再チェック）。**driver_id は引数で受けない**（なりすまし防止） |
+| `approve_reject_shift` | area | `my_office_drivers()` 配下のみ・申請中→承認/却下。**既確定の再送は冪等**（同じ決定=`already`／別決定=`23514`競合）・不正値=`22023`・見つからない/配下外は同一`42501` |
+| `office_direct_shift` | area | 同上・承認状態で直接登録（フォールバック・却下は承認で上書き・atomic再チェック）。driver_id 空/NULL は認可前に `22023` |
 
 認可は**関数内で強制**＝RPC 直叩きでも門番が効く。書込はこの3関数のみ・`work_schedules` に write policy は作らない（認証v1.1）。
+読取RLS: `shift_labels` は hq=全 / area=自営業所 / **driver=自営業所**（8.7 申請画面の work_type 選択肢を driver がこの口から引く）。
 
 ## 設計判断（業務A確認済み 2026-07-20）
 
@@ -41,6 +42,7 @@
 
 - ⚠ **希望エリアの表示名は #28 依存**。`preferred_areas` は common_id で保存するが、**人間可読なエリア名の解決は #28 の表示名解決ビュー（未実装）**。#28 完成までフロントは common_id を出すか希望エリア入力を保留する（`shift_rpc_contract_v0.md` 共通事項）。
 - **新設営業所でラベル0件だと配車が落ちる条件**＝「承認済み稼働があるのに (office, work_type) が未定義」。稼働申請が無い営業所は dispatch_build の対象に入らず落ちない。`seed_office_shift_labels` を呼ぶと NOTICE で「標準初期値・実態と違えば管理者設定で修正」を促す（標準を入れて放置→実態ズレ、が唯一の残リスク）。
+- ⚠ **offices に新規行を作る全スクリプトは、shift_mgmt 適用後は shift_labels の seed が必須**（さもないと dispatch_build (0) が新設営業所の稼働区分を名指し拒否し、**全営業所を一括処理するため当日の全配車が巻き添え停止**する）。`region_itami_demo_v0/region_setup_v0.sql` は本モジュールで是正済み（IT01 の shift_labels を §4 と同じ postgres 直接複製・テーブル在時のみ）。他の offices 追加スクリプト（`office_assign_v0/seed_office_master_v0.sql`・`dispatch_v0/seed_dispatch_v0.sql`・`rls_v0/seed_accounts_v0.sql`・`dbschema_v0/seed_dummy_v0.sql`・`driver_auth_frontend_v0/promote_test_driver_v0.sql` 等）も**新設営業所を足すなら同様の seed を入れること**。※(0)チェックのブラスト半径を該当営業所のみに絞る設計は将来検討（現状は全体loud-fail＝config修正まで止める思想）。
 - `shift_hours`（旧グローバル）は**消さない**（配車の旧経路・verify_rls_scope 等が参照）。cap の参照先だけ切替。
 
 ## 範囲外（別担当）
@@ -49,6 +51,6 @@
 ## 検証（Claude Code）
 
 ```bash
-node supabase/shift_mgmt_v0/pglite_test_ext_labels_cap.mjs   # 15/15（列拡張・labels移行・cap回帰・名指しraise）
-node supabase/shift_mgmt_v0/pglite_test_definers.mjs         # 24/24（認可・期間/二重・遷移・headcount・範囲外0件＋1日1稼働UNIQUE/TOCTOU/再申請/NULL）
+node supabase/shift_mgmt_v0/pglite_test_ext_labels_cap.mjs   # 19/19（列拡張・labels移行・cap回帰・名指しraise＋shift_labels driver読取）
+node supabase/shift_mgmt_v0/pglite_test_definers.mjs         # 27/27（認可・期間/二重・遷移・headcount・範囲外0件＋1日1稼働UNIQUE/TOCTOU/再申請/NULL＋approve冪等・存在オラクル）
 ```

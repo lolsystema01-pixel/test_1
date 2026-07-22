@@ -44,7 +44,7 @@ const call = async (fn, args) => {
 };
 const rpc = async (sql, params=[]) => {
   try { return { ok:true, row:(await db.query(sql, params)).rows[0] }; }
-  catch (e) { return { ok:false, msg:e.message }; }
+  catch (e) { return { ok:false, msg:e.message, code:e.code }; }   // SQLSTATE も拾う（契約のコード検証用）
 };
 
 // ---- ④ write policy 無し ----
@@ -96,11 +96,25 @@ console.log('② approve_reject_shift');
   let r = await rpc(`select public.approve_reject_shift($1,'承認') as j`, [applied.id]);
   ok('② area が配下(DRV001∈A01)の申請中を承認できる', r.ok && r.row.j.status === '承認');
 
+  // HIGH-2: 既確定の再送は冪等（apply/office_direct と対称）。同じ決定=already（成功扱い・再送安全）。
   r = await rpc(`select public.approve_reject_shift($1,'承認') as j`, [applied.id]);
-  ok('② 既に承認済みは再承認できない（申請中のみ）', !r.ok && /申請中の稼働予定のみ/.test(r.msg));
+  ok('② 既に同じ決定(承認)の再送は already（冪等・恒久エラーにしない）',
+     r.ok && r.row.j.result === 'already' && r.row.j.status === '承認');
 
+  // HIGH-2: 別決定への変更は本物の状態競合＝23514（再送不可）。
+  r = await rpc(`select public.approve_reject_shift($1,'却下') as j`, [applied.id]);
+  ok('② 承認済みを却下へ変更は 23514（状態競合・再送不可）',
+     !r.ok && r.code === '23514' && /既に「承認」で確定済み/.test(r.msg));
+
+  // HIGH-2: 不正な決定値は入力エラー＝22023（状態競合 23514 と意味を分離）。
   r = await rpc(`select public.approve_reject_shift($1,'保留') as j`, [applied.id]);
-  ok('② 承認/却下 以外の決定は拒否', !r.ok && /承認\/却下 のみ/.test(r.msg));
+  ok('② 承認/却下 以外の決定は 22023（入力値エラー・状態競合と別コード）',
+     !r.ok && r.code === '22023' && /承認\/却下 のみ/.test(r.msg));
+
+  // LOW-1: 存在しない id は 42501（P0002と畳んで id 存在オラクルを消す）。
+  r = await rpc(`select public.approve_reject_shift(999999,'承認') as j`);
+  ok('② 存在しない id は 42501（配下外と同一・存在オラクル回避）',
+     !r.ok && r.code === '42501');
 
   // 他営業所の申請を C01 area が触れない（範囲外0件）
   await as('driver', null, 'DRV001'); await rpc(`select public.apply_shift(current_date + 9, '半日') as j`);
@@ -154,6 +168,9 @@ console.log('⑥ 1日1稼働 UNIQUE（レビューMED/HIGH）');
      r1.ok && r1.row.j.result === 'applied' && r2.ok && r2.row.j.result === 'already');
   const cnt = (await one(db, `select count(*)::int n from public.work_schedules where driver_id='DRV003' and work_date=current_date+20`)).n;
   ok('⑥ 同一(driver,date)は1行のみ（配車全停止バグの根を断つ）', cnt === 1);
+  // HIGH-1 外側ガード: 却下でない既存行(申請中)は2件目 apply で blind update されない（work_type 保持）。
+  ok('⑥ 申請中の既存行は2件目 apply で上書きされない（work_type=フルのまま）',
+     (await one(db, `select work_type from public.work_schedules where driver_id='DRV003' and work_date=current_date+20`)).work_type === 'フル');
 
   // TOCTOU: 直接INSERTで2行作ろうとしても UNIQUE が弾く
   let toctou = null;

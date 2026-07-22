@@ -59,6 +59,9 @@ as $$
 $$;
 comment on function public.preferred_areas_ok(text[]) is
   '希望エリア配列(common_id[])の受理判定：NULL要素なし・空文字なし・重複なし。work_schedules の CHECK が参照';
+-- 純関数で実害は無いが、明示 revoke で一貫性を保つ（レビューLOW）。CHECK 内評価は所有者コンテキストのため制約は効く。
+revoke execute on function public.preferred_areas_ok(text[]) from public;
+grant  execute on function public.preferred_areas_ok(text[]) to authenticated;
 
 do $$
 begin

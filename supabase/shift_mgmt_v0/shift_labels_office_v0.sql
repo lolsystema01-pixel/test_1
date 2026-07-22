@@ -37,16 +37,24 @@ comment on table public.shift_labels is
 
 
 -- =============================================================
--- §2. RLS（読取: hq=全件 ／ area=自営業所のみ。書込ポリシーは作らない＝規約）
+-- §2. RLS（読取: hq=全件 ／ area=自営業所 ／ driver=自分の営業所。書込ポリシーは作らない＝規約）
+--   ★driver 読取（レビューMED-2）: 8.7 稼働申請画面が「自分の営業所の有効な work_type 一覧」を
+--     出せるよう、driver に自営業所ぶんの SELECT を許す。営業所別に自由編集可になった以上、
+--     この読取口が無いと申請の選択肢が引けない（契約の穴）。driver の営業所は drivers.office_code。
 -- =============================================================
 alter table public.shift_labels enable row level security;
 grant select on public.shift_labels to authenticated;
-drop policy if exists shift_labels_hq   on public.shift_labels;
-drop policy if exists shift_labels_area on public.shift_labels;
+drop policy if exists shift_labels_hq     on public.shift_labels;
+drop policy if exists shift_labels_area   on public.shift_labels;
+drop policy if exists shift_labels_driver on public.shift_labels;
 create policy shift_labels_hq   on public.shift_labels for select to authenticated
   using ( public.my_role() = 'hq' );
 create policy shift_labels_area on public.shift_labels for select to authenticated
   using ( public.my_role() = 'area' and office_code = public.my_office() );
+create policy shift_labels_driver on public.shift_labels for select to authenticated
+  using ( public.my_role() = 'driver'
+          and office_code = (select d.office_code from public.drivers d
+                             where d.driver_id = public.my_driver()) );
 
 
 -- =============================================================
