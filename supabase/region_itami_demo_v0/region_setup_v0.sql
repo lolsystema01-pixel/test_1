@@ -21,6 +21,23 @@ on conflict (office_code) do update set
   depot_code = excluded.depot_code, office_name = excluded.office_name,
   basket_cart_limit = excluded.basket_cart_limit, basket_code_format = excluded.basket_code_format;
 
+-- 1.5) IT01 の稼働ラベル（shift_mgmt v0.7 適用後のみ）--------------------------
+--   ★重要（shift_mgmt v0.7 以降）: 新設営業所 IT01 に shift_labels が無いまま §3 でフル・承認の
+--     稼働を作ると、dispatch_build の事前チェック(0)が「IT01／フル未定義」を名指しで raise し、
+--     dispatch_build は全営業所を一括処理するため **当日の全営業所の配車が巻き添えで停止**する。
+--     → shift_hours（§0）の内容を IT01 ぶん shift_labels に直接複製しておく（§4移行と同じ postgres
+--       直接流儀。seed_office_shift_labels() は hq ゲート付きで postgres 実行だと 42501 になるため使わない）。
+--     shift_labels テーブルが未作成（＝shift_mgmt 未適用の旧環境）なら何もしない。
+do $$
+begin
+  if exists (select 1 from information_schema.tables
+             where table_schema='public' and table_name='shift_labels') then
+    insert into public.shift_labels (office_code, work_type, hours)
+    select 'IT01', sh.work_type, sh.hours from public.shift_hours sh
+    on conflict (office_code, work_type) do nothing;
+  end if;
+end $$;
+
 -- 2) ドライバー8名（IT01所属・スキル）--------------------------------------
 insert into public.drivers (driver_id, driver_name, skill_per_hour, office_code, registration_status) values
   ('ITD001','伊丹ドライバー01',20,'IT01','登録済'),
