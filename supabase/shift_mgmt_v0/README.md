@@ -30,6 +30,8 @@
 認可は**関数内で強制**＝RPC 直叩きでも門番が効く。書込はこの3関数のみ・`work_schedules` に write policy は作らない（認証v1.1）。
 読取RLS: `shift_labels` は hq=全 / area=自営業所 / **driver=自営業所**（8.7 申請画面の work_type 選択肢を driver がこの口から引く）。
 
+★**ラベル必須は入口で強制**：3経路とも「稼働区分がその営業所の `shift_labels` に定義済みか」を確認し、未定義なら**その1操作だけ** `P0002` で止める（承認済みに入れない＝配車全停止を未然に防ぐ・却下は対象外）。`dispatch_build` の事前チェックは、直接SQL/移行が入口を迂回した場合の**最後の砦**として残す（二重の守り）。
+
 ## 設計判断（業務A確認済み 2026-07-20）
 
 - **is_virtual = フラグ列だけ**（(a)）。`work_schedules.driver_id` は drivers への FK で、仮ドライバー（仮N）は drivers に無く配車エンジンが実行時に `dispatch_drivers` 上に生成するだけ。「仮の稼働も work_schedules に入れる」(b) は FK を外すことになり既存設計が崩れるので**採らない**。列だけ用意（将来要件が出たら別途設計）。
@@ -42,7 +44,9 @@
 
 - ⚠ **希望エリアの表示名は #28 依存**。`preferred_areas` は common_id で保存するが、**人間可読なエリア名の解決は #28 の表示名解決ビュー（未実装）**。#28 完成までフロントは common_id を出すか希望エリア入力を保留する（`shift_rpc_contract_v0.md` 共通事項）。
 - **新設営業所でラベル0件だと配車が落ちる条件**＝「承認済み稼働があるのに (office, work_type) が未定義」。稼働申請が無い営業所は dispatch_build の対象に入らず落ちない。`seed_office_shift_labels` を呼ぶと NOTICE で「標準初期値・実態と違えば管理者設定で修正」を促す（標準を入れて放置→実態ズレ、が唯一の残リスク）。
-- ⚠ **offices に新規行を作る全スクリプトは、shift_mgmt 適用後は shift_labels の seed が必須**（さもないと dispatch_build (0) が新設営業所の稼働区分を名指し拒否し、**全営業所を一括処理するため当日の全配車が巻き添え停止**する）。`region_itami_demo_v0/region_setup_v0.sql` は本モジュールで是正済み（IT01 の shift_labels を §4 と同じ postgres 直接複製・テーブル在時のみ）。他の offices 追加スクリプト（`office_assign_v0/seed_office_master_v0.sql`・`dispatch_v0/seed_dispatch_v0.sql`・`rls_v0/seed_accounts_v0.sql`・`dbschema_v0/seed_dummy_v0.sql`・`driver_auth_frontend_v0/promote_test_driver_v0.sql` 等）も**新設営業所を足すなら同様の seed を入れること**。※(0)チェックのブラスト半径を該当営業所のみに絞る設計は将来検討（現状は全体loud-fail＝config修正まで止める思想）。
+- **新設営業所の配車全停止は三層で防ぐ**：①通常フロー＝**書き込み口3経路が入口でラベル未定義を `P0002` 拒否**（承認済みに入れない・根治）。②デモ/移行＝offices を新規INSERTするスクリプトは shift_labels を seed する（`region_itami_demo_v0/region_setup_v0.sql` は本モジュールで是正済み：IT01 を §4 と同じ postgres 直接複製・テーブル在時のみ）。③最後の砦＝`dispatch_build (0)` が入口を迂回した未定義を名指し停止。
+  - ⚠ 他の offices 追加スクリプト（`office_assign_v0/seed_office_master_v0.sql`・`dispatch_v0/seed_dispatch_v0.sql`・`rls_v0/seed_accounts_v0.sql`・`dbschema_v0/seed_dummy_v0.sql`・`driver_auth_frontend_v0/promote_test_driver_v0.sql` 等）も**新設営業所を足すなら②の seed を入れること**（直接INSERTは①の入口を通らない）。
+  - ※ `dispatch_build (0)` のブラスト半径を該当営業所のみに絞る設計は将来検討（現状は全体 loud-fail＝config 修正まで止める思想。ただし①で通常フローはそもそも未定義を作れないため、砦が発火するのは迂回時のみ）。
 - `shift_hours`（旧グローバル）は**消さない**（配車の旧経路・verify_rls_scope 等が参照）。cap の参照先だけ切替。
 
 ## 範囲外（別担当）
@@ -52,5 +56,5 @@
 
 ```bash
 node supabase/shift_mgmt_v0/pglite_test_ext_labels_cap.mjs   # 19/19（列拡張・labels移行・cap回帰・名指しraise＋shift_labels driver読取）
-node supabase/shift_mgmt_v0/pglite_test_definers.mjs         # 27/27（認可・期間/二重・遷移・headcount・範囲外0件＋1日1稼働UNIQUE/TOCTOU/再申請/NULL＋approve冪等・存在オラクル）
+node supabase/shift_mgmt_v0/pglite_test_definers.mjs         # 32/32（認可・期間/二重・遷移・headcount・範囲外0件＋1日1稼働UNIQUE/TOCTOU/再申請/NULL＋approve冪等・存在オラクル＋3経路ラベル必須）
 ```

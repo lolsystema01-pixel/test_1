@@ -33,6 +33,19 @@ await db.exec(`
 
   insert into public.offices values ('A01',30),('C01',30);
   insert into public.drivers values ('DRV001','A01'),('DRV002','A01'),('DRV003','C01');
+
+  -- 稼働区分マスタ（shift_labels）: 書き込み口のラベル必須チェックが参照する。
+  --   両営業所にテストで使う区分（フル/6時間/2時間/半日/6中）を配布しておく。
+  create table public.shift_labels (
+    office_code text not null references public.offices(office_code),
+    work_type   text not null,
+    hours       numeric not null,
+    primary key (office_code, work_type)
+  );
+  insert into public.shift_labels (office_code, work_type, hours)
+  select o.office_code, wt.work_type, wt.hours
+  from public.offices o
+  cross join (values ('フル',8),('6時間',6),('2時間',2),('半日',4),('6中',6)) as wt(work_type, hours);
 `);
 await db.exec(EXT);
 await db.exec(DEFINERS);
@@ -203,6 +216,40 @@ console.log('⑧ office_direct_shift(NULL driver)');
   const r = await rpc(`select public.office_direct_shift(null, current_date + 23, 'フル') as j`);
   ok('⑧ driver_id=NULL は認可ゲート直後に 22023（下流NOT NULL頼みにしない）',
      !r.ok && /driver_id.*必須|ドライバーID.*必須/.test(r.msg));
+}
+
+// ---- ⑨ 承認に至る3経路のラベル必須チェック（ミスを入口で断つ・配車全停止の根治） ----
+console.log('⑨ ラベル必須チェック（入口で断つ）');
+{
+  // apply: 未定義ラベルは申請時点で P0002（承認済みに入れない＝配車が壊れようがない）
+  await as('driver', null, 'DRV001');
+  let r = await rpc(`select public.apply_shift(current_date + 25, '存在しない区分') as j`);
+  ok('⑨ apply: 未定義ラベルは申請時点で P0002（承認済みに入れない）',
+     !r.ok && r.code === 'P0002' && /未定義/.test(r.msg));
+  ok('⑨ apply: 弾いたので行は作られない',
+     (await one(db, `select count(*)::int n from public.work_schedules where driver_id='DRV001' and work_date=current_date+25`)).n === 0);
+
+  // office_direct: 未定義ラベルは直接登録時点で P0002
+  await as('area', 'A01', null);
+  r = await rpc(`select public.office_direct_shift('DRV002', current_date + 25, '存在しない区分') as j`);
+  ok('⑨ office_direct: 未定義ラベルは登録時点で P0002',
+     !r.ok && r.code === 'P0002' && /未定義/.test(r.msg));
+
+  // approve: 申請時は有効→後でラベルが消えても、承認の瞬間に P0002（その1件だけ止まる・全営業所は無関係）。
+  //   「後から消えた」状況を作るため、申請中行を直接INSERT（apply の入口を迂回）してからラベルを削除。
+  await db.exec(`insert into public.work_schedules(driver_id, work_date, work_type, application_status)
+                 values ('DRV001', current_date + 26, 'フル', '申請中')`);
+  const bad = await one(db, `select id from public.work_schedules where driver_id='DRV001' and work_date=current_date+26`);
+  await db.exec(`delete from public.shift_labels where office_code='A01' and work_type='フル'`);
+  await as('area', 'A01', null);
+  r = await rpc(`select public.approve_reject_shift($1,'承認') as j`, [bad.id]);
+  ok('⑨ approve: 承認の瞬間にラベル未定義なら P0002（この1件だけ止まる）',
+     !r.ok && r.code === 'P0002' && /未定義/.test(r.msg));
+  // 却下はラベル不要（配車に載らない）＝ラベルが無くても却下できる
+  r = await rpc(`select public.approve_reject_shift($1,'却下') as j`, [bad.id]);
+  ok('⑨ 却下はラベル不要で通る（配車に載らないため対象外）', r.ok && r.row.j.status === '却下');
+  // 後始末：消したラベルを戻す
+  await db.exec(`insert into public.shift_labels(office_code,work_type,hours) values('A01','フル',8) on conflict do nothing`);
 }
 
 console.log(`\n=== ${pass} PASS / ${fail} FAIL ===`);

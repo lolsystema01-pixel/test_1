@@ -62,6 +62,16 @@ begin
     raise exception 'ドライバーの所属営業所が解決できません（driver=%）', v_driver using errcode = 'P0002';
   end if;
 
+  -- ★ラベル必須チェック（ミスを入口で断つ）:
+  --   稼働区分が自営業所の shift_labels に未定義なら、この時点で止める（未定義のまま承認済みに入ると
+  --   dispatch_build が全営業所巻き添えで停止する＝それを入口で防ぐ）。dispatch_build(0) の事前チェックは
+  --   直接SQL/移行が入口を迂回した場合の最後の砦として残す（二重の守り）。エラーは dispatch_build と同じ P0002。
+  if not exists (select 1 from public.shift_labels sl
+                 where sl.office_code = v_office and sl.work_type = p_work_type) then
+    raise exception '営業所「%」に稼働区分「%」が未定義です。先に管理者設定で稼働区分（ラベル→時間）を登録してください。',
+      v_office, p_work_type using errcode = 'P0002';
+  end if;
+
   -- 期間チェック（今日以降 かつ request_period_days 以内。NULL=無制限）
   if p_work_date < current_date
      or (v_period is not null and p_work_date > current_date + v_period) then
@@ -144,14 +154,28 @@ begin
     raise exception '決定は 承認/却下 のみです（%）', coalesce(p_decision,'(null)') using errcode = '22023';
   end if;
 
-  select ws.id, ws.driver_id, ws.application_status into v_row
-  from public.work_schedules ws where ws.id = p_id;
+  select ws.id, ws.driver_id, ws.work_type, ws.application_status, d.office_code
+    into v_row
+  from public.work_schedules ws
+  join public.drivers d on d.driver_id = ws.driver_id
+  where ws.id = p_id;
   -- ★「見つからない」と「配下外」を同一メッセージ・同一コード(42501)に畳む（レビューLOW-1）。
   --   別々（P0002 と 42501）だと area が他営業所の id 存在を error コードで推測できる（存在オラクル）。
   --   not found のとき driver_id は null で `null not in(...)`=null になるが、or の左（not found）で真になる。
   if not found or v_row.driver_id not in (select public.my_office_drivers()) then
     raise exception '対象の稼働予定が無いか、自営業所の配下ではありません (id=%)', p_id
       using errcode = '42501';
+  end if;
+
+  -- ★承認時のラベル必須チェック（ミスを承認で確定させない・入口で断つ）:
+  --   承認＝配車に載る状態。稼働区分がその営業所の shift_labels に未定義なら、この承認1件だけを止める
+  --   （dispatch_build が全営業所を巻き添えに停止する事態を、入口で未然に防ぐ）。却下はラベル不要（配車に
+  --   載らない）ので対象外。dispatch_build(0) は直接SQL/移行が入口を迂回した場合の最後の砦として残す。
+  if p_decision = '承認'
+     and not exists (select 1 from public.shift_labels sl
+                     where sl.office_code = v_row.office_code and sl.work_type = v_row.work_type) then
+    raise exception '営業所「%」に稼働区分「%」が未定義です。先に管理者設定で稼働区分を登録してから承認してください。',
+      v_row.office_code, v_row.work_type using errcode = 'P0002';
   end if;
 
   -- 状態遷移: 申請中 → 承認/却下 のみ
@@ -220,6 +244,15 @@ begin
   if p_driver_id not in (select public.my_office_drivers()) then
     raise exception 'このドライバーは自営業所の配下ではありません (driver=%)', p_driver_id
       using errcode = '42501';
+  end if;
+
+  -- ★ラベル必須チェック（直接入力＝即承認で配車に載る・入口で断つ）:
+  --   稼働区分がその営業所の shift_labels に未定義なら登録を止める。配下チェック済み＝この
+  --   ドライバーの営業所は my_office()。dispatch_build(0) は入口迂回時の最後の砦として残す。
+  if not exists (select 1 from public.shift_labels sl
+                 where sl.office_code = public.my_office() and sl.work_type = p_work_type) then
+    raise exception '営業所「%」に稼働区分「%」が未定義です。先に管理者設定で稼働区分を登録してから登録してください。',
+      public.my_office(), p_work_type using errcode = 'P0002';
   end if;
 
   -- 二重登録防止：★1日1稼働のため判定キーは (driver, date)（UNIQUE と同じキー）。
