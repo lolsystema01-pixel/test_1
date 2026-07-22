@@ -13,7 +13,9 @@ alter table public.profiles       enable row level security;
 alter table public.depots         enable row level security;
 alter table public.offices        enable row level security;
 alter table public.zone_plan      enable row level security;
-alter table public.address_master enable row level security;
+-- ⚠ RETIRED（2026-07-17）: address_master は撤去済み（⑤）。後継 area_master の RLS 有効化は
+--   area_master_v0/area_master_schema_v0.sql:50 が持つ。
+-- alter table public.address_master enable row level security;
 alter table public.deliveries     enable row level security;
 alter table public.delivery_index enable row level security;
 alter table public.drivers        enable row level security;
@@ -23,9 +25,12 @@ alter table public.work_schedules enable row level security;
 -- RLS(行の絞り込み)の前に、まずテーブルへのアクセス権(GRANT)が必要。
 -- これが無いと authenticated は「permission denied」で弾かれる（RLS以前の段階）。
 -- 実際に見える行は、この上で各ポリシーが行レベルに絞り込む（GRANT=入口の許可のみ）。
+-- ⚠ RETIRED（2026-07-17）: address_master は撤去済み（⑤）。後継は area_master で、
+--   GRANT と hq ポリシーは area_master_v0/area_master_schema_v0.sql:52-55 が持つ。
+--   → この GRANT から address_master を外した（残すと再実行時に「テーブル無し」で落ちる）。
 grant select on
   public.profiles, public.depots, public.offices, public.zone_plan,
-  public.address_master, public.deliveries, public.delivery_index,
+  public.deliveries, public.delivery_index,
   public.drivers, public.work_schedules
 to authenticated;
 
@@ -50,7 +55,8 @@ drop policy if exists work_schedules_hq       on public.work_schedules;
 drop policy if exists work_schedules_area     on public.work_schedules;
 drop policy if exists work_schedules_driver   on public.work_schedules;
 drop policy if exists zone_plan_hq            on public.zone_plan;
-drop policy if exists address_master_hq       on public.address_master;
+-- ⚠ RETIRED（2026-07-17）: address_master は撤去済み（⑤）。
+-- drop policy if exists address_master_hq       on public.address_master;
 
 
 -- =============================================================
@@ -139,5 +145,7 @@ create policy work_schedules_driver on public.work_schedules for select to authe
 -- zone_plan / address_master：本部=全行（詳細範囲は別指示書）
 create policy zone_plan_hq on public.zone_plan for select to authenticated
   using ( public.my_role() = 'hq' );
-create policy address_master_hq on public.address_master for select to authenticated
-  using ( public.my_role() = 'hq' );
+-- ⚠ RETIRED（2026-07-17）: address_master は撤去済み（⑤）。policy はテーブルと共に消滅済み。
+--   後継 area_master の hq ポリシーは area_master_v0/area_master_schema_v0.sql:53-55 が持つ。
+-- create policy address_master_hq on public.address_master for select to authenticated
+--   using ( public.my_role() = 'hq' );

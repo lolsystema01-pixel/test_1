@@ -22,16 +22,26 @@
    - 下の表が **ゾーン番号順の配達順**で並ぶ（ゾーンが変わる行に緑の区切り線）
    - ドライバーで絞り込み可。**「リセット」で何度でも実演**可能
 
-## セキュリティ（割り切り）
-- **ローカルデモ用の一時物**。demo_* は anon から実行可（DEFINER）。本番投入する類のものではない（デモ後は関数を drop 可）。
-- 住所を表示する（内部デモ想定）。外部公開はしない。
+## ⚠ セキュリティ: 停止済み（2026-07-17）
 
-## 検証（Claude Code）
-- pglite 8/8（demo_* のコンパイル・実行・リセット・anon付与）／sort_nav svelte-check 0/0・build 成功。
+**当初「割り切り」で anon 実行可（DEFINER）にしていたが、独立2監査が Critical 判定。**
+anonキーは実質公開のため、未認証で `demo_reset` による全営業所データ破壊、`demo_summary`/
+`demo_delivery_order` による全件PII読取が可能だった（営業所スコープ判定なし）。
 
-## 後片付け（デモ終了後）
+- **対応**: `revoke_demo_anon_v0.sql` で anon/authenticated/public から**全面 revoke**（完全停止）。
+  ソースの grant ブロックは RETIRED（再実行しても anon は付かない）。
+- **`/demo` は動かなくなる**（権限エラー）。デモ不要のため許容。
+  リンク: `home/+page.svelte:221`・`sort/+page.svelte:206`（除去は任意）。
+- **将来「配車・採番の画面」が要るなら案B**で作り直す:
+  authenticated のみ＋関数内 `my_office()` スコープ認可、読取は `security_invoker` ビュー＋area RLS
+  （＝ `record_status_transition` / `office_home_summary` と同じ規約）。
+
+## 完全に消す場合（デモを二度と使わないと確定したら）
 ```sql
-drop function if exists public.demo_dispatch(date), public.demo_renumber(date), public.demo_reset(date),
+-- ※ 8関数すべて（旧READMEの drop 文は preview 系2本が抜けていた）。
+drop function if exists
+  public.demo_dispatch_preview(date), public.demo_renumber_preview(date),
+  public.demo_dispatch(date), public.demo_renumber(date), public.demo_reset(date),
   public.demo_summary(date), public.demo_delivery_order(date,text,int), public.demo_drivers(date);
 ```
-（フロントの `/demo` ルートとホームのリンクは残しても害なし。）
+（`/demo` ルートと home/sort のリンクも併せて削除する。）

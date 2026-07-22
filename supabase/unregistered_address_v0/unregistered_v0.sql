@@ -92,8 +92,19 @@ where tracking_number = '279113440026';
 --   ・対象＝共通ID未付与（保留）の荷物のみ（既に解決済みは触らない）。
 --   ・住所判定(match_v0)＋拠点振分(assign_office_v0)と同一ロジックを再適用。
 -- -------------------------------------------------------------
+-- ⚠⚠ RETIRED（2026-07-17）: §5-1（下の再判定クエリ）は実行しないでください。
+--   ・参照先の **address_master は⑤で drop 済み**（指示書「語彙是正→address_master 撤去 v0.1」）
+--     ＝実行すれば「テーブル無し」で落ちます。
+--   ・後継は **common_id_assign_v0/common_id_rematch_v0.sql**（area_master 直lookup での再マッチ）。
+--     保留荷物の再判定はそちらを使ってください。
+--   ・§1〜§4（未登録住所の記録・一覧・修正）と §6（件数）は **現役**です。
+--     この表明は §5-1 だけを対象にしています。
+--   経緯: supabase/vocab_fix_v0/README.md ／ docs/handoff_status_v0.md §3.1
+-- -------------------------------------------------------------
 
--- §5-1) 住所→共通ID（正規化して前方一致・最長一致採用。match_v0 と同一規則）
+-- §5-1) 住所→共通ID（正規化して前方一致・最長一致採用。match_v0 と同一規則）  ← RETIRED（実行部を無効化）
+/* ↓↓ RETIRED（2026-07-17）: address_master 参照（撤去済み⑤）。後継＝common_id_rematch_v0.sql。
+   drop後は実行時エラー＝fail-closed。§5-2以降と §1〜§4・§6 は現役（この無効化は §5-1 のみ）。
 with norm as (
   select tracking_number, public.normalize_addr(address) as na
   from public.deliveries
@@ -114,6 +125,22 @@ update public.deliveries d
 set common_id = b.common_id
 from best b
 where b.tracking_number = d.tracking_number;
+*/ -- ↑↑ RETIRED（§5-1 実行部ここまで・無効化）↑↑
+
+-- ⚠ 失敗モードの維持: §5-1 をコメント化しただけだと、ファイルを丸ごと実行したとき
+--   §5-1 が【静かにスキップ】され §5-2 以降に進み、「再判定したつもり」で共通IDが
+--   付いていない、という無言の誤りになる（撤去前は「テーブル不在エラー」で目立って止まっていた）。
+--   → 明示的に停止させて、正しい手順（common_id_rematch_v0.sql を先に実行）へ誘導する。
+--   ※ §5-2 以降だけを使いたい場合は、本ブロックを含めずに §5-2〜§5-4 を選択実行すること
+--     （本ファイルは元々「各ブロックを選択して個別実行」する運用・冒頭の手順書き参照）。
+do $$
+begin
+  raise exception
+    '§5-1（住所→共通IDの再判定）は撤去済みです（address_master 参照・⑤で drop）。'
+    '共通IDの再付与は common_id_assign_v0/common_id_rematch_v0.sql を先に実行してください。'
+    'そのうえで §5-2〜§5-4 だけを選択実行してください（このブロックは含めない）。'
+    using errcode = 'P0001';
+end $$;
 
 -- §5-2) 共通ID→拠点→営業所（assign_office_v0 と同一経路。新たに共通IDが付いた分だけ）
 update public.deliveries d
