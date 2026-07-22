@@ -47,8 +47,9 @@ const lines = CHECK.split('\n');
 const s = lines.findIndex((l) => l.trimEnd() === 'begin;');
 const e = lines.findIndex((l, i) => i > s && l.trimStart().startsWith('rollback;'));
 const block = lines.slice(s, e + 1).join('\n');
+// ※ CRLF 環境（git の LF→CRLF 変換）だと行末に \r が残るので trim して判定する。
 ok('§4 が begin;〜rollback; として抽出できる（コメントアウトされていない）',
-   block.startsWith('begin;') && block.endsWith('rollback;'));
+   block.trim().startsWith('begin;') && block.trim().endsWith('rollback;'));
 ok('§4 に手動置換のプレースホルダが残っていない', !/<AREA_UID>|<○○_UID>/.test(block));
 
 // ---- ③ なりすましが成立するか（⑤の失敗前まで） ----

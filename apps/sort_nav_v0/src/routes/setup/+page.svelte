@@ -15,12 +15,16 @@
   let msg = $state('');
 
   // 入力時の簡易チェック（サーバ側 DEFINER 関数でも再検証＝多層防御）
+  // 保存口（save_office_init_setup）＋CHECK制約と同一条件。画面だけ緩いと RPC 直叩きで素通りするため。
+  //   URL安全文字のみ・改行/空白/記号なし・末尾固定・500文字以内。
   let urlError = $derived(
     gdriveFolderUrl.trim() === ''
       ? '持出バッグリストのフォルダURLを入力してください。'
-      : !/^https:\/\/drive\.google\.com\//.test(gdriveFolderUrl.trim())
-        ? 'GドライブのフォルダURL（https://drive.google.com/… ）を入力してください。'
-        : ''
+      : gdriveFolderUrl.trim().length > 500
+        ? 'URLが長すぎます（500文字以内）。'
+        : !/^https:\/\/drive\.google\.com\/[A-Za-z0-9/_?=&%.-]+$/.test(gdriveFolderUrl.trim())
+          ? 'GドライブのフォルダURL（https://drive.google.com/… ）を入力してください。'
+          : ''
   );
   let canSave = $derived(!saving && urlError === '' && printerModel !== '');
 

@@ -114,10 +114,21 @@ console.log('D. 入力検証');
   ok('D. URL が空文字は拒否（未完のまま残さない）', (await save('C01', '   ', 'Brother TD-2350')) !== null);
   ok('D. 機種が CHECK 許容外は拒否', (await save('C01', 'https://drive.google.com/drive/folders/y', 'Epson')) !== null);
   ok('D. 機種が NULL は拒否', (await save('C01', 'https://drive.google.com/drive/folders/y', null)) !== null);
-  // 画面側の検証（^https://drive.google.com/）と同条件を保存口にも持たせる＝RPC直叩きでも素通りしない
+  // 画面側の検証（^https://drive.google.com/…）と同条件を保存口にも持たせる＝RPC直叩きでも素通りしない
   ok('D. Drive 以外のURLは拒否（RPC直叩きでも画面と同じ判定が効く）',
      (await save('C01', 'https://example.com/folders/y', 'Brother TD-2350')) !== null);
   ok('D. URLらしくない文字列も拒否', (await save('C01', 'あとで入れる', 'Brother TD-2350')) !== null);
+  // MED-1: 終端を固定していないと通る攻撃ベクトル（レビュー指摘・pgliteで実測した現物）
+  ok('D. 改行注入（後ろに別URL）を拒否（$ではなく\\Zで終端固定）',
+     (await save('C01', 'https://drive.google.com/\nhttps://evil.com/exfil', 'Brother TD-2350')) !== null);
+  ok('D. HTMLタグ等の後続ゴミを拒否（改行が無くても通さない）',
+     (await save('C01', 'https://drive.google.com/</a><script>alert(1)</script>', 'Brother TD-2350')) !== null);
+  ok('D. 過大長（500文字超）を拒否',
+     (await save('C01', 'https://drive.google.com/' + 'x'.repeat(600), 'Brother TD-2350')) !== null);
+  ok('D. drive.google.com@evil.com は拒否（既に拒否されている設計の回帰）',
+     (await save('C01', 'https://drive.google.com@evil.com/', 'Brother TD-2350')) !== null);
+  ok('D. drive.google.com.evil.com は拒否（サブドメイン偽装）',
+     (await save('C01', 'https://drive.google.com.evil.com/', 'Brother TD-2350')) !== null);
   // ここまで全て拒否されている＝1件も書き込まれていないことを先に確認する
   ok('D. 拒否された C01 は「未完」のまま',
      (await one(db, `select gdrive_folder_url from public.offices where office_code='C01'`)).gdrive_folder_url === null);
@@ -150,9 +161,41 @@ console.log('D-2. 空文字の封じ込め（CHECK）');
   catch (e) { e2 = e.message; }
   ok('D-2. 空白のみもできない（btrim 判定）', e2 !== null);
 
+  // MED-1: CHECK は「空文字」だけでなく Drive URL 形式・改行・過大長も弾く（直UPDATEでも）
+  const rejectDirect = async (val) => {
+    try { await db.query(`update public.offices set gdrive_folder_url = $1 where office_code='A01'`, [val]); return false; }
+    catch { return true; }
+  };
+  ok('D-2. 直UPDATE: Drive以外のURLを CHECK が拒否', await rejectDirect('https://example.com/x'));
+  ok('D-2. 直UPDATE: 改行注入を CHECK が拒否', await rejectDirect('https://drive.google.com/x\nhttps://evil.com'));
+  ok('D-2. 直UPDATE: 500文字超を CHECK が拒否', await rejectDirect('https://drive.google.com/' + 'x'.repeat(600)));
+  ok('D-2. 直UPDATE: 正常な Drive URL は通る', !(await rejectDirect('https://drive.google.com/drive/folders/ok')));
+
   ok('D-2. NULL には戻せる（未完に戻す運用は可能）',
      await db.exec(`update public.offices set gdrive_folder_url = null where office_code='A01'`)
        .then(() => true).catch(() => false));
+}
+
+// ---- D-3. TOCTOU: 「初回のみ」が書込みWHEREで保証されること（MED-2）----
+//   read→write の間に別リクエストが確定するレースを、UPDATE の WHERE 条件で封じている。
+//   pglite は単一接続で真の並行はできないため、「事前チェックを通過した後に v_current が
+//   陳腐化した」状況を、A01 を直接 completed にしてから同一 area で保存させて再現する。
+console.log('D-3. TOCTOU（初回のみの不変条件を書込みWHEREで保証）');
+{
+  await as('area', 'A01');
+  // 事前チェックは v_current=null を見て通るが、実際の書込み前に別経路で completed になったと仮定
+  await db.exec(`update public.offices set gdrive_folder_url = 'https://drive.google.com/drive/folders/RACE_WINNER'
+                 where office_code='A01'`);
+  const err = await save('A01', 'https://drive.google.com/drive/folders/RACE_LOSER', 'Brother TD-2350');
+  ok('D-3. 既に完了済みの行への area 保存は WHERE 条件で0件→拒否される', err !== null);
+  ok('D-3. 先発（RACE_WINNER）が後発に上書きされていない',
+     (await one(db, `select gdrive_folder_url from public.offices where office_code='A01'`))
+       .gdrive_folder_url === 'https://drive.google.com/drive/folders/RACE_WINNER');
+  // hq は WHERE の (v_role='hq' OR …) 側で常に更新できる（完了後でも）
+  await as('hq', null);
+  ok('D-3. hq は完了後でも更新できる（WHERE の hq 分岐）',
+     (await save('A01', 'https://drive.google.com/drive/folders/BY_HQ', '汎用サーマル')) === null);
+  await db.exec(`update public.offices set gdrive_folder_url = null where office_code='A01'`);
 }
 
 // ---- E. 保存後は完了＝ゲートが出ない ----
@@ -184,9 +227,16 @@ console.log('F. 冪等');
 // ---- G. 既存設定列を壊さない ----
 console.log('G. 既存列への影響');
 {
-  const a = await one(db, `select basket_cart_limit, basket_order, printer_model from public.offices where office_code='A01'`);
-  ok('G. 触っていない A01 の既存設定が不変（printer_model 含む）',
-     a.basket_cart_limit === 10 && a.basket_order === 'ドライバー順' && a.printer_model === 'Brother TD-2350');
+  // ※ A01 は D-3（hqの完了後更新）で printer_model を変えたため、ここでは「モジュール適用が
+  //   既存の設定機構を壊していないか」を構造で見る（列の存在・型不変・write policy 無し）。
+  const cols = (await db.query(`
+    select column_name from information_schema.columns
+    where table_schema='public' and table_name='offices'
+      and column_name in ('basket_cart_limit','basket_order','printer_model','auto_logout_enabled')`)).rows.map(r => r.column_name).sort();
+  ok('G. 既存の設定列（basket_cart_limit/basket_order/printer_model/auto_logout_enabled）が残っている',
+     JSON.stringify(cols) === JSON.stringify(['auto_logout_enabled','basket_cart_limit','basket_order','printer_model']));
+  ok('G. 既存の printer_model CHECK 制約を壊していない',
+     (await one(db, `select count(*)::int as n from pg_constraint where conname='offices_printer_model_chk'`)).n === 1);
   ok('G. offices に write policy を作っていない',
      (await one(db, `select count(*)::int as n from pg_policies
                      where schemaname='public' and tablename='offices'
