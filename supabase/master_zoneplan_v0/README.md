@@ -18,25 +18,33 @@
 - `zenkoku_master_dummy.csv`（14行）/ `zenkoku_zoneplan_dummy.csv`（8行）。
   - 内容は `load_master_v0.sql` に seed として取り込み済み（AIパス）。
 
+## ⚠ 全国Master（address_master）は撤去済み（2026-07-17・語彙是正⑤）
+
+本モジュールのうち **Master 側は retire 済み**で、**ZonePlan 側のみ現役**です。後継は **`area_master`**（`area_master_v0/`）。
+各SQLの Master 該当部は無効化済みなので、**フレッシュ環境でもそのまま実行できます**（ZonePlan だけが入る）。
+経緯: `supabase/vocab_fix_v0/README.md`
+
 ## 成果物 / 実行順（SQL Editor）
 
-1. （前提）DBスキーマ v0 作成済み（address_master/zone_plan の骨格）
-2. `create_master_v0.sql` … テーブルをv0.4仕様へ＋ステージング作成
-3. `reset_prev_master_v0.sql` … **以前のマスタ・ダミーを削除**
-4. `load_master_v0.sql` … **1回目**（zone_plan 8 / address_master 14 投入）
+1. （前提）DBスキーマ v0 作成済み（zone_plan の骨格。address_master は作られない）
+2. `create_master_v0.sql` … ZonePlanをv0.4仕様へ＋ステージング作成（①Master部は retire）
+3. `reset_prev_master_v0.sql` … **以前の zone_plan ダミーを削除**
+   ⚠ zone_plan には②で**新語彙1,653件**が入っている。フレッシュ環境の初回構築以外では実行しないこと。
+4. `load_master_v0.sql` … **1回目**（zone_plan 8 投入。§3/§6 の Master 部は retire）
 5. `load_master_v0.sql` … **2回目**（全件スキップ＝0）
-6. `check_master_v0.sql` … 確認
+6. `check_master_v0.sql` … 確認（①②③⑤⑥⑦ の Master 参照は retire・zone_plan 側は現役）
+
+**住所→共通IDのマスタが必要な場合は `area_master_v0/` を使う**（本モジュールではない）。
 
 ## 期待結果
 
 | テーブル | csv_rows | unique | inserted(1回目/2回目) | skipped(1回目/2回目) |
 |---------|---------|--------|----------------------|----------------------|
 | zone_plan | 8 | 8 | 8 / 0 | 0 / 8 |
-| address_master | 14 | 14 | 14 / 0 | 0 / 14 |
+| ~~address_master~~ | — | — | — | 撤去済み（⑤）＝§7に出ない |
 
-- 共通IDで Master×ZonePlan が結合でき、共通ID→ゾーン番号・隣接、Master→拠点 が引ける。
 - 隣接は共通IDで格納（zone_plan に自己結合で全件解決）。
-- 丁目は通常空（NULL）。version / is_valid 列あり。
+- ~~共通IDで Master×ZonePlan が結合でき…~~ → 後継は `area_master` × `zone_plan`（④の関数移行で移行済み）。
 
 ## 設計メモ（割り切り）
 
