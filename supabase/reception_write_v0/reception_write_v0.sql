@@ -78,6 +78,12 @@ comment on column public.reception_requests.status          is '受付済=有効
 create unique index if not exists reception_requests_active_tn_uidx
   on public.reception_requests (tracking_number) where status = '受付済';
 
+-- v0.2追記: memo（自由記入）。現行フォームのmemoを受付テーブルに保存する（LOL指摘）。
+--   自由記入＝PII混入がありうる前提で扱う（get_reception_public では返さない）。
+alter table public.reception_requests add column if not exists memo text;
+comment on column public.reception_requests.memo is
+  '自由記入メモ（現行フォームのmemo・500字上限）。PII混入がありうるため非PII照会(get_reception_public)には出さない';
+
 create sequence if not exists public.reception_receipt_seq;
 
 
@@ -108,6 +114,11 @@ begin
     alter table public.reception_requests add constraint reception_requests_cp_len_chk
       check (caller_phone is null or char_length(caller_phone) <= 32);
   end if;
+
+  if not exists (select 1 from pg_constraint where conname = 'reception_requests_memo_len_chk') then
+    alter table public.reception_requests add constraint reception_requests_memo_len_chk
+      check (memo is null or char_length(memo) <= 500);
+  end if;
 end $$;
 
 
@@ -118,6 +129,9 @@ end $$;
 --   冪等: 活性受付(status='受付済')と全項目（種別・希望日・時間帯・置き配場所）一致→'unchanged'（行を増やさない）
 --   実行権限: authenticated＋anon（お客様チャネルは未ログインのため）。search_path=public固定。
 -- =============================================================
+-- v0.2改訂: p_memo追加＝引数構成が変わるため旧シグネチャを明示drop（default解決の衝突事故防止・冪等）
+drop function if exists public.register_reception(text, text, date, text, text, text, text, boolean);
+
 create or replace function public.register_reception(
   p_tracking_number text,
   p_type            text,
@@ -126,7 +140,8 @@ create or replace function public.register_reception(
   p_drop_place      text,
   p_channel         text,
   p_caller_phone    text default null,
-  p_overwrite       boolean default false
+  p_overwrite       boolean default false,
+  p_memo            text default null
 ) returns jsonb
 language plpgsql
 security definer
@@ -160,6 +175,7 @@ begin
      or char_length(coalesce(p_time_slot, '')) > 32
      or char_length(coalesce(p_drop_place, '')) > 100
      or char_length(coalesce(p_caller_phone, '')) > 32
+     or char_length(coalesce(p_memo, '')) > 500
      or (
        p_desired_date is not null
        and (
@@ -217,7 +233,8 @@ begin
     v_same := (v_existing.reception_type is not distinct from p_type)
       and (v_existing.desired_date is not distinct from p_desired_date)
       and (v_existing.time_slot is not distinct from p_time_slot)
-      and (v_existing.drop_place is not distinct from p_drop_place);
+      and (v_existing.drop_place is not distinct from p_drop_place)
+      and (v_existing.memo is not distinct from p_memo);
 
     if v_same then
       -- 冪等: 内容が全項目一致 → 行を増やさない
@@ -238,9 +255,9 @@ begin
 
     begin
       insert into public.reception_requests
-        (receipt_no, tracking_number, band_key, verified, reception_type, desired_date, time_slot, drop_place, channel, caller_phone, status, created_by)
+        (receipt_no, tracking_number, band_key, verified, reception_type, desired_date, time_slot, drop_place, channel, caller_phone, memo, status, created_by)
       values
-        (v_receipt_no, p_tracking_number, v_band.band_key, v_verified, p_type, p_desired_date, p_time_slot, p_drop_place, p_channel, p_caller_phone, '受付済', auth.uid());
+        (v_receipt_no, p_tracking_number, v_band.band_key, v_verified, p_type, p_desired_date, p_time_slot, p_drop_place, p_channel, p_caller_phone, p_memo, '受付済', auth.uid());
     exception
       when unique_violation then
         -- M1: 同時実行で他トランザクションが先に活性受付(reception_requests_active_tn_uidx)を
@@ -269,9 +286,9 @@ begin
 
   begin
     insert into public.reception_requests
-      (receipt_no, tracking_number, band_key, verified, reception_type, desired_date, time_slot, drop_place, channel, caller_phone, status, created_by)
+      (receipt_no, tracking_number, band_key, verified, reception_type, desired_date, time_slot, drop_place, channel, caller_phone, memo, status, created_by)
     values
-      (v_receipt_no, p_tracking_number, v_band.band_key, v_verified, p_type, p_desired_date, p_time_slot, p_drop_place, p_channel, p_caller_phone, '受付済', auth.uid());
+      (v_receipt_no, p_tracking_number, v_band.band_key, v_verified, p_type, p_desired_date, p_time_slot, p_drop_place, p_channel, p_caller_phone, p_memo, '受付済', auth.uid());
   exception
     when unique_violation then
       -- M1: 上と同じ理由（新規登録側でも同時実行の競合をduplicateとして返す）。
@@ -291,11 +308,11 @@ begin
   );
 end $$;
 
-comment on function public.register_reception(text, text, date, text, text, text, text, boolean) is
+comment on function public.register_reception(text, text, date, text, text, text, text, boolean, text) is
   '受付登録の記録口（N-4/N-5）。帯判定→(照合あり帯のみ)deliveries実在チェック→二重/冪等/上書き制御→採番。SECURITY DEFINER。anon実行可（お客様チャネル向け）';
 
-revoke execute on function public.register_reception(text, text, date, text, text, text, text, boolean) from public;
-grant  execute on function public.register_reception(text, text, date, text, text, text, text, boolean) to authenticated, anon;
+revoke execute on function public.register_reception(text, text, date, text, text, text, text, boolean, text) from public;
+grant  execute on function public.register_reception(text, text, date, text, text, text, text, boolean, text) to authenticated, anon;
 
 
 -- =============================================================
@@ -323,7 +340,7 @@ as $$
   order by r.created_at desc
   limit 1
 $$;
---   ↑ caller_phone（PII）・created_by は意図的に SELECT しない（非PIIサマリの源流強制）。
+--   ↑ caller_phone（PII）・created_by・memo（自由記入＝PII混入がありうる）は意図的に SELECT しない（非PIIサマリの源流強制）。
 
 comment on function public.get_reception_public(text) is
   '活性受付の非PIIサマリ（N-6）。receipt_no/type/desired_date/time_slot/drop_place/status のみ。caller_phone・created_byは返さない';

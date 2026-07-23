@@ -110,8 +110,8 @@ try {
 ok('reception_write_v0.sql が適用できる', applied);
 
 const reg = (args) => db.query(
-  `select public.register_reception($1,$2,$3,$4,$5,$6,$7,$8) r`,
-  args
+  `select public.register_reception($1,$2,$3,$4,$5,$6,$7,$8,$9) r`,
+  args.length === 9 ? args : [...args, null] // 第9引数 p_memo（省略時null＝既存テスト非破壊）
 ).then((res) => res.rows[0].r);
 const countActive = async (tn) => Number(
   (await db.query(`select count(*)::int n from public.reception_requests where tracking_number=$1 and status='受付済'`, [tn])).rows[0].n
@@ -543,6 +543,30 @@ await asUser(A01, async () => {
   }
   ok('authenticated役の直接INSERTは拒否される（記録口関数経由のみ＝default-denyの直接証明）', denied);
 });
+
+console.log('\n[18) memo保存（v0.2・LOL指摘）：保存・上限・上書き履歴・非PII照会に出ない]');
+{
+  const r1 = await reg(['KAZMEMO0000001', '再配達', D5, '午前', null, 'web', null, false, '玄関前に置く場合はチャイム不要']);
+  ok('memo付きで created', r1.result === 'created');
+  const row1 = (await db.query(`select memo from public.reception_requests where receipt_no=$1`, [r1.receipt_no])).rows[0];
+  ok('memoが行に保存される', row1.memo === '玄関前に置く場合はチャイム不要');
+
+  const rLong = await reg(['KAZMEMO0000002', '再配達', D5, '午前', null, 'web', null, false, 'あ'.repeat(501)]);
+  ok('memo 501文字 → format_error', rLong.result === 'format_error');
+  const rMax = await reg(['KAZMEMO0000002', '再配達', D5, '午前', null, 'web', null, false, 'あ'.repeat(500)]);
+  ok('memo 500文字ちょうど → created（境界OK）', rMax.result === 'created');
+
+  const rSame = await reg(['KAZMEMO0000001', '再配達', D5, '午前', null, 'web', null, true, '玄関前に置く場合はチャイム不要']);
+  ok('memo含め同一内容 overwrite=true → unchanged', rSame.result === 'unchanged');
+  const rMemoChg = await reg(['KAZMEMO0000001', '再配達', D5, '午前', null, 'web', null, true, '置き場所変更：物置の中へ']);
+  ok('memoだけ変更 overwrite=true → overwritten（履歴が残る）', rMemoChg.result === 'overwritten');
+  const rows = (await db.query(`select status, memo from public.reception_requests where tracking_number=$1 order by created_at`, ['KAZMEMO0000001'])).rows;
+  ok('旧行=取消・新行=受付済の2行', rows.length === 2 && rows[0].status === '取消' && rows[1].status === '受付済');
+  ok('新行のmemoが更新後の値', rows[1].memo === '置き場所変更：物置の中へ');
+
+  const pub = (await db.query(`select public.get_reception_public($1) p`, ['KAZMEMO0000001'])).rows[0].p;
+  ok('★get_reception_public に memo キーが無い（自由記入=PII混入がありうるため源流で遮断）', pub !== null && !('memo' in pub));
+}
 
 console.log(`\nreception_write pglite: ${pass} passed, ${fail} failed`);
 await db.close();
