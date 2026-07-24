@@ -1,9 +1,9 @@
 // N-9 電話受け口API：IVR／オペレータ入力（or 後段P3のAI音声）からの受付内容を N-4 へ funnel する枠。
 //   ・本人確認は §5.2（IVR/オペレータ）で実施済み前提＝受け口はそれを信頼して登録。
-//   ・読み取り（存在確認）は既存関数 lookup。登録は N-4（registerReception）。二重受付は N-5（duplicate）。
+//   ・読み取り（存在確認）は既存関数 lookup。登録は N-4（submitReception・channel='phone'）。二重受付は N-5（duplicate）。
 import type { RequestHandler } from './$types';
 import { lookupDelivery } from '$lib/server/lookup';
-import { registerReception } from '$lib/server/store';
+import { submitReception } from '$lib/server/reception';
 import { rateLimit } from '$lib/server/channels/ratelimit';
 import { validateAll, needsDateTime, needsDropPlace } from '$lib/validation';
 import { ok, fail, todayLocal } from '$lib/server/respond';
@@ -36,7 +36,7 @@ export const POST: RequestHandler = async ({ request }) => {
     );
     if (Object.keys(errors).length > 0) return fail('VALIDATION_ERROR', '受付内容に誤りがあります。', 400);
 
-    const r = registerReception(
+    const r = await submitReception(
       tn,
       {
         type: body.type as string,
@@ -44,11 +44,15 @@ export const POST: RequestHandler = async ({ request }) => {
         timeSlot: needsDateTime(body.type) ? body.timeSlot : undefined,
         dropPlace: needsDropPlace(body.type) ? body.dropPlace : undefined
       },
-      body.overwrite === true
+      { overwrite: body.overwrite === true, channel: 'phone' }
     );
     if (!r.ok && r.duplicate) {
       logMasked('phone/duplicate', { trackingNumber: tn });
       return fail('DUPLICATE_RECEPTION', `すでに受付済みです（受付番号 ${r.existing?.receiptNo}）。overwrite=true で上書き可。`, 409);
+    }
+    if (!r.ok) {
+      logMasked('phone/failed', { trackingNumber: tn });
+      return fail('INTERNAL_ERROR', '受付に失敗しました。', 500);
     }
     logMasked('phone/ok', { trackingNumber: tn, type: body.type, operatorId: op });
     return ok({ receiptNo: r.receiptNo, type: body.type });
