@@ -36,14 +36,16 @@ comment on column public.number_bands.verify_on_reception  is '受付時に deli
 --   demo9000('9',11,照会可,照合あり) … 検証9000帯（12桁・9始まり）
 --   req    ('REQ-',null,照会可,照合あり) … 伊丹デモ帯
 --   dsp    ('DSP-',null,照会可,照合あり) … 配車量産デモ帯
---   kaz/a/four … 仮値（現場確認後にUPDATE。照会不可・照合なし）
-insert into public.number_bands (band_key, prefix, digits, lookup_enabled, verify_on_reception, label) values
-  ('demo9000', '9',    11,   true,  true,  '検証9000帯'),
-  ('req',      'REQ-', null, true,  true,  'REQ帯(伊丹デモ)'),
-  ('dsp',      'DSP-', null, true,  true,  'DSP帯(配車量産デモ)'),
-  ('kaz',      'KAZ',  null, false, false, 'KAZ帯(仮値)'),
-  ('a',        'A',    null, false, false, 'A帯(仮値)'),
-  ('four',     '4',    null, false, false, '4帯(仮値)')
+--   kaz/a/four … 仮値（enabled=false=帯ごと停止。現場確認後に enabled/lookup を解禁UPDATE。
+--     レビューMED-1対応: 仮値のまま enabled だと anon が実在チェックなしの受付を量産できる
+--     （単字prefix A/4 は実番号の誤照合リスクも）ため、既定を停止にする）
+insert into public.number_bands (band_key, prefix, digits, enabled, lookup_enabled, verify_on_reception, label) values
+  ('demo9000', '9',    11,   true,  true,  true,  '検証9000帯'),
+  ('req',      'REQ-', null, true,  true,  true,  'REQ帯(伊丹デモ)'),
+  ('dsp',      'DSP-', null, true,  true,  true,  'DSP帯(配車量産デモ)'),
+  ('kaz',      'KAZ',  null, false, false, false, 'KAZ帯(仮値・停止中)'),
+  ('a',        'A',    null, false, false, false, 'A帯(仮値・停止中)'),
+  ('four',     '4',    null, false, false, false, '4帯(仮値・停止中)')
 on conflict (band_key) do nothing;
 
 
@@ -192,7 +194,7 @@ begin
 
   -- ── 帯判定（最長prefix優先）──
   select * into v_band from public.number_bands
-  where enabled and p_tracking_number like prefix || '%'
+  where enabled and left(p_tracking_number, char_length(prefix)) = prefix -- レビューLOW-2: prefixに%/_が入っても安全な前方一致
     and (digits is null or substring(p_tracking_number from char_length(prefix) + 1) ~ ('^[0-9]{' || digits || '}$'))
   order by char_length(prefix) desc, band_key
   limit 1;
@@ -336,7 +338,7 @@ as $$
   )
   from public.reception_requests r
   where r.tracking_number = p_tracking_number
-    and r.status = '受付済'
+    and r.status in ('受付済', '反映済') -- 反映済（配車反映後）でも客の照会が消えないように（レビューLOW-1）
   order by r.created_at desc
   limit 1
 $$;

@@ -16,6 +16,30 @@ function stubRpc(result: unknown, error: unknown = null) {
 
 afterEach(() => __setClientForTest(undefined)); // 次のテスト（フォールバック等）に影響させない
 
+// 引数キャプチャ付きスタブ（v0.2 memo配線の実引数検証用・レビューHIGH-1対応）
+function stubRpcCapture(result: unknown) {
+  const captured: { args?: Record<string, unknown> } = {};
+  return {
+    client: { rpc: async (_fn: string, args: Record<string, unknown>) => { captured.args = args; return { data: result, error: null }; } },
+    captured
+  };
+}
+
+test('v0.2: memoあり → p_memo がRPC実引数に渡る（フォーム→RPCの配線検証）', async () => {
+  const { client, captured } = stubRpcCapture({ result: 'created', receipt_no: 'R-260724-0001', band_key: 'demo9000', verified: true, existing_receipt_no: null, existing_type: null });
+  __setClientForTest(client);
+  const r = await submitReception(TN, { type: '再配達', desiredDate: '2026-07-25', timeSlot: '午前', memo: '玄関前はチャイム不要でお願いします' });
+  assert.equal(r.ok, true);
+  assert.equal(captured.args?.p_memo, '玄関前はチャイム不要でお願いします');
+});
+
+test('v0.2: memoなし → p_memo は null（後方互換）', async () => {
+  const { client, captured } = stubRpcCapture({ result: 'created', receipt_no: 'R-260724-0002', band_key: 'demo9000', verified: true, existing_receipt_no: null, existing_type: null });
+  __setClientForTest(client);
+  await submitReception(TN, { type: '再配達', desiredDate: '2026-07-25', timeSlot: '午前' });
+  assert.equal(captured.args?.p_memo, null);
+});
+
 test('register_reception: created → ok:true + receiptNo', async () => {
   __setClientForTest(
     stubRpc({

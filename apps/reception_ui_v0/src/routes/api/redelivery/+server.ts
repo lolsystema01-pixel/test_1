@@ -40,15 +40,16 @@ export const POST: RequestHandler = async ({ request }) => {
       return fail('VALIDATION_ERROR', '入力内容に誤りがあります。', 400);
     }
 
-    // 注：memo はバリデーションのみ行い、登録には含めない（reception_requests に memo 列なし。
-    //   §4 の非PIIサマリ設計とも整合＝自由記述の永続化は範囲外・要確認）。
+    // memo は v0.2 で reception_requests.memo に保存される（LOL指摘・レビューHIGH-1対応。
+    //   500字上限はDB側で強制・非PIIサマリ（get_reception_public）には出ない＝§4の設計どおり）。
     const r = await submitReception(
       tn,
       {
         type: body.type as string,
         desiredDate: needsDateTime(body.type) ? body.desiredDate : undefined,
         timeSlot: needsDateTime(body.type) ? body.timeSlot : undefined,
-        dropPlace: needsDropPlace(body.type) ? body.dropPlace : undefined
+        dropPlace: needsDropPlace(body.type) ? body.dropPlace : undefined,
+        memo: body.memo?.trim() ? body.memo.trim() : undefined
       },
       { overwrite: body.overwrite === true, channel: 'web' }
     );

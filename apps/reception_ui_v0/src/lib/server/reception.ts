@@ -73,7 +73,7 @@ async function client(): Promise<SupabaseClient | null> {
 // 受付登録（N-4）。二重受付（N-5）は overwrite 指定がない限り duplicate を返す。
 export async function submitReception(
   tn: string,
-  payload: { type: string; desiredDate?: string; timeSlot?: string; dropPlace?: string },
+  payload: { type: string; desiredDate?: string; timeSlot?: string; dropPlace?: string; memo?: string },
   opts?: { overwrite?: boolean; channel?: 'web' | 'line' | 'sms' | 'phone' | 'ai_phone'; callerPhone?: string }
 ): Promise<SubmitResult> {
   const c = await client();
@@ -90,7 +90,8 @@ export async function submitReception(
     p_drop_place: payload.dropPlace ?? null,
     p_channel: opts?.channel ?? 'web',
     p_caller_phone: opts?.callerPhone ?? null,
-    p_overwrite: opts?.overwrite ?? false
+    p_overwrite: opts?.overwrite ?? false,
+    p_memo: payload.memo ?? null // v0.2: お客様の自由記入（500字上限はDB側で強制・非PII照会には出ない）
   });
   if (error || !data) {
     // RPCエラー時はフォールバックしない（書き込み先がDB/インメモリに割れるのを防ぐ）
