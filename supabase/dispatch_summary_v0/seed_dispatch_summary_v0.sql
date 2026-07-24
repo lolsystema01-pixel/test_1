@@ -19,10 +19,11 @@ insert into public.drivers (driver_id, driver_name, skill_per_hour, office_code,
 on conflict (driver_id) do nothing;
 
 -- 2) 承認稼働＋希望エリア（DSD1=希望{DS_ZA}→希望内 ／ DSD2=希望{DS_ZA}だが DS_ZB 担当＝希望外）
+--    ※ 0) の DELETE(DSD%) で冪等は担保済みなので ON CONFLICT は付けない
+--      （UNIQUE(driver_id, work_date)=shift_mgmt の 1日1稼働 が実DB未適用でも本 seed が通るように）。
 insert into public.work_schedules (driver_id, work_date, work_type, application_status, preferred_areas) values
   ('DSD1', current_date, 'フル', '承認', array['DS_ZA']),
-  ('DSD2', current_date, 'フル', '承認', array['DS_ZA'])
-on conflict (driver_id, work_date) do nothing;
+  ('DSD2', current_date, 'フル', '承認', array['DS_ZA']);
 
 -- 3) deliveries（配車後の実体を模す：driver_id 書戻し済み・対象日=current_date・A01）
 --    実: DS_ZA×4(DSD1・希望内) ／ DS_ZB×3(DSD2・希望外)
